@@ -27,5 +27,6 @@ cat > build/Mnome.app/Contents/Info.plist <<'PLIST'
 <key>NSAppleEventsUsageDescription</key><string>Mnome hides and restores the macOS menu bar.</string>
 </dict></plist>
 PLIST
-codesign --force --sign - build/Mnome.app
+# An ad-hoc signature changes every build, so macOS forgets permissions; a fixed identity keeps them.
+codesign --force --sign "${MNOME_SIGN_ID:--}" build/Mnome.app
 printf 'Built %s/build/Mnome.app\n' "$PWD"

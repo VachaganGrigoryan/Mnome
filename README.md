@@ -8,7 +8,7 @@ Run `./scripts/build.sh` from this directory. The locally ad-hoc signed app is `
 
 The Swift host owns application discovery, UI, capture and Accessibility objects. Rust ranks application searches and computes overview layouts through a versioned JSON C ABI. Swift copies Rust response bytes and releases them using Rust's free function.
 
-Window previews require Screen Recording permission; window control requires Accessibility permission in System Settings. Application launching remains available without these permissions. Rebuilding with an ad-hoc signature may require granting permissions again.
+Window previews require Screen Recording permission; window control requires Accessibility permission in System Settings. Application launching remains available without these permissions. Rebuilding with an ad-hoc signature may require granting permissions again. To keep them, create a self-signed *Code Signing* certificate in Keychain Access (Certificate Assistant) and build with `MNOME_SIGN_ID="<certificate name>" ./scripts/build.sh`.
 
 Only eligible onscreen windows are included. Hidden and minimized windows are excluded. Public APIs cannot reliably join every captured window to an Accessibility window: ambiguous selections activate the owning app instead. Stage Manager and fullscreen behavior require manual verification. Previews are snapshots, not continuous streams.
 
@@ -17,7 +17,9 @@ Only eligible onscreen windows are included. Hidden and minimized windows are ex
 - `cargo fmt --manifest-path core/Cargo.toml --check`
 - `cargo clippy --manifest-path core/Cargo.toml --offline --all-targets -- -D warnings`
 - `cargo test --manifest-path core/Cargo.toml --offline`
-- `./scripts/build.sh`
+- `cargo build --release --manifest-path core/Cargo.toml --offline`, then `swift test` (it links the release core)
+- `./scripts/build.sh`, then `build/Mnome.app/Contents/MacOS/Mnome --self-test`
+- `build/Mnome.app/Contents/MacOS/Mnome --gallery DIR` renders the shell surfaces to PNG without opening windows
 
 Manual acceptance: launch and dismiss with the keyboard, search and open an app, select a window, deny each permission, close a window during capture, test duplicate titles, multiple displays, mixed scales and fullscreen/Stage Manager. macOS 15 compatibility needs a host running that version. Developer ID signing and notarization are not included.
 

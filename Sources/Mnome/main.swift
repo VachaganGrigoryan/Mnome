@@ -24,7 +24,7 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
 @MainActor final class Model: ObservableObject {
     @Published var query = ""; @Published var apps: [AppItem] = []; @Published var windows: [WindowItem] = []
     @Published var overview = false; @Published var message = ""; @Published var selection = 0
-    var close: (() -> Void)?
+    var close: ((_ reactivate: Bool) -> Void)?
     @Published var filtered: [AppItem] = []
     @Published var appState: PresentationState = .loading
     @Published var windowState: PresentationState = .empty
@@ -59,7 +59,7 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
             Task { @MainActor in self.apps = items; self.search() }
         }
     }
-    func launch(_ item: AppItem) { NSWorkspace.shared.openApplication(at: item.url, configuration: .init()) { app, error in Task { @MainActor in if let error { self.appState = .error(error.localizedDescription) } else { self.close?(); _ = app?.activate() } } } }
+    func launch(_ item: AppItem) { NSWorkspace.shared.openApplication(at: item.url, configuration: .init()) { app, error in Task { @MainActor in if let error { self.appState = .error(error.localizedDescription) } else { self.close?(false); _ = app?.activate() } } } }
     var generation = UUID()
     func fallbackWindows() {
             let entries = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
@@ -96,10 +96,10 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
         }
     }
     func focus(_ item: WindowItem) {
-        close?()
+        close?(false) // reactivating the previous app here would race the window being raised
         DispatchQueue.global(qos: .userInitiated).async {
             guard let app = NSRunningApplication(processIdentifier: item.pid) else { return }
-            let ax = AXUIElementCreateApplication(item.pid); AXUIElementSetMessagingTimeout(ax, 0.5)
+            let ax = AXUIElementCreateApplication(item.pid)
             var raw: CFTypeRef?
             var matched: [AXUIElement] = []
             if AXIsProcessTrusted(), AXUIElementCopyAttributeValue(ax, kAXWindowsAttribute as CFString, &raw) == .success, let list = raw as? [AXUIElement] {
@@ -116,7 +116,7 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
                 }
             }
             DispatchQueue.main.sync { _ = app.activate() }
-            if matched.count == 1 { AXUIElementSetMessagingTimeout(matched[0], 0.5); AXUIElementPerformAction(matched[0], kAXRaiseAction as CFString) }
+            if matched.count == 1 { AXUIElementPerformAction(matched[0], kAXRaiseAction as CFString) }
         }
     }
 }
@@ -141,7 +141,7 @@ struct ShellView: View {
                         .onSubmit { if let item = model.filtered.first { model.launch(item) } else if let window = matchingWindows.first { model.focus(window) } }
                 }.padding(.horizontal, 16).frame(height: 40).background(Color.white.opacity(0.1)).clipShape(Capsule()).frame(maxWidth: 480)
                 Spacer()
-                Button { model.close?() } label: { Image(systemName: "xmark").frame(width: 36, height: 36).background(ShellPalette.toggle).clipShape(Circle()) }
+                Button { model.close?(true) } label: { Image(systemName: "xmark").frame(width: 36, height: 36).background(ShellPalette.toggle).clipShape(Circle()) }
                     .buttonStyle(ShellButtonStyle()).help("Close (Ctrl+W)").accessibilityLabel("Close")
             }
             switch content {
@@ -174,7 +174,7 @@ struct ShellView: View {
             }
             Text("\(model.shortcutTitle) · Esc to close").foregroundStyle(ShellPalette.dim).font(.caption)
         }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity).background(ShellPalette.overview).clipShape(RoundedRectangle(cornerRadius: 24)).shellTheme()
-        .onExitCommand { switch EscapeAction.escape(query: model.query) { case .clearSearch: model.query = ""; case .close: model.close?() } }
+        .onExitCommand { switch EscapeAction.escape(query: model.query) { case .clearSearch: model.query = ""; case .close: model.close?(true) } }
         .onAppear { searchFocused = true }
         .onChange(of: model.searchFocusRequest) { _, _ in searchFocused = true }
         .onChange(of: model.overview) { _, _ in searchFocused = true; model.refreshWindows() }
@@ -234,7 +234,8 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
     let macChrome = MacChromeController()
     let model = Model(); var panel: NSPanel?; var panels: [NSPanel] = []; var status: NSStatusItem!; var hotkey: EventHotKeyRef?; var previous: NSRunningApplication?
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory); model.shortcutTitle = UserDefaults.standard.string(forKey: "shortcutTitle") ?? "Control–Option–Space"; model.discover(); model.close = { [weak self] in self?.dismiss() }
+        NSApp.setActivationPolicy(.accessory); model.shortcutTitle = UserDefaults.standard.string(forKey: "shortcutTitle") ?? "Control–Option–Space"; model.discover(); model.close = { [weak self] in self?.dismiss(reactivate: $0) }
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.5) // the system-wide element sets the timeout for every element in this process
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let url = Bundle.main.url(forResource: "Mnome", withExtension: "icns"), let appIcon = NSImage(contentsOf: url) {
             NSApp.applicationIconImage = appIcon
@@ -256,7 +257,7 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
         let favoritesItem = NSMenuItem(title: "Favorites", action: nil, keyEquivalent: ""); favoritesItem.submenu = NSMenu(); menu.insertItem(favoritesItem, at: 1)
         for (title, action) in [("Preferences…", #selector(showPreferences)), ("Keyboard Shortcuts", #selector(showKeyboardShortcuts)), ("About Mnome", #selector(showAbout)), ("Focus Dock", #selector(focusDock)), ("Focus Top Bar", #selector(focusTopBar)), ("Restore macOS Shell", #selector(restoreMacChrome))] { let item = NSMenuItem(title:title,action:action,keyEquivalent:""); item.target = self; menu.addItem(item) }
         status.menu = menu
-        dock.model.beforeOpen = { [weak self] in if self?.panel?.isVisible == true { self?.dismiss() } }
+        dock.model.beforeOpen = { [weak self] in if self?.panel?.isVisible == true { self?.dismiss(reactivate: false) } }
         dock.changed = { [weak self] in self?.updateFavoritesMenu() }
         dock.model.showApps = { [weak self] in guard let self else { return }; if self.panel?.isVisible == true { self.dismiss() } else { self.model.overview = false; self.toggle() } }
         dock.start()
@@ -275,8 +276,10 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
         ShellUtilities.shared.configure(actions: topBar.actions, model: model, dock: dock.model, macChrome: macChrome)
         topBar.start()
         var type = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(), { _, _, pointer in
-            guard let pointer else { return OSStatus(eventNotHandledErr) }
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, pointer in
+            var id = EventHotKeyID()
+            guard let pointer, GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil, MemoryLayout<EventHotKeyID>.size, nil, &id) == noErr,
+                  id.signature == 0x4d4e4f4d, id.id == 1 else { return OSStatus(eventNotHandledErr) }
             let delegate = Unmanaged<Delegate>.fromOpaque(pointer).takeUnretainedValue()
             Task { @MainActor in delegate.showActivities() }; return noErr
         }, 1, &type, Unmanaged.passUnretained(self).toOpaque(), nil)
@@ -321,9 +324,9 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
         if result == noErr { UserDefaults.standard.set(choice.mask, forKey: "shortcutModifiers"); UserDefaults.standard.set(choice.title, forKey: "shortcutTitle"); model.shortcutTitle = choice.title }
         else { RegisterEventHotKey(UInt32(kVK_Space), UInt32(previous.mask), EventHotKeyID(signature: 0x4d4e4f4d, id: 1), GetApplicationEventTarget(), 0, &hotkey); let alert = NSAlert(); alert.messageText = "Shortcut unavailable"; alert.informativeText = "Choose another shortcut from Quick Settings."; alert.runModal() }
     }
-    func applicationWillTerminate(_ notification: Notification) { topBar.stop(); dock.stop(); macChrome.restoreAll(wait: true) }
+    func applicationWillTerminate(_ notification: Notification) { topBar.stop(); dock.stop(); macChrome.restoreAll(quitting: true) }
     @objc func restoreMacChrome() { macChrome.restoreAll() }
-    func validateMenuItem(_ item: NSMenuItem) -> Bool { item.action == #selector(restoreMacChrome) ? !macChrome.hidden.isEmpty : true }
+    func validateMenuItem(_ item: NSMenuItem) -> Bool { item.action == #selector(restoreMacChrome) ? macChrome.needsRestore : true }
     @objc func toggleDock(_ sender: NSMenuItem) { setDockVisible(!dock.enabled) }
     func setDockVisible(_ visible: Bool) {
         dock.setVisible(visible)
@@ -370,7 +373,7 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
         }
         model.refreshWindows(); NSApp.activate(); panel?.makeKeyAndOrderFront(nil)
     }
-    func dismiss() { model.generation = UUID(); model.query = ""; panels.forEach { $0.orderOut(nil) }; panels = []; panel = nil; previous?.activate() }
+    func dismiss(reactivate: Bool = true) { model.generation = UUID(); model.query = ""; panels.forEach { $0.orderOut(nil) }; panels = []; panel = nil; if reactivate { previous?.activate() } }
 }
 MainActor.assumeIsolated {
  if CommandLine.arguments.contains("--self-test") {
@@ -393,6 +396,10 @@ MainActor.assumeIsolated {
     print("Mnome bridge self-test passed"); exit(0)
  }
  let app = NSApplication.shared
+ if let flag = CommandLine.arguments.firstIndex(of: "--gallery") {
+    guard CommandLine.arguments.indices.contains(flag + 1) else { fatalError("Usage: Mnome --gallery DIR") }
+    do { try Gallery.render(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1])); exit(0) } catch { fatalError("Gallery failed: \(error)") }
+ }
  let delegate = Delegate()
  app.delegate = delegate
  app.run()

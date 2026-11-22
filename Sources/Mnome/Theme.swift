@@ -321,7 +321,7 @@ struct PreferencesView: View {
                             ForEach(MacElement.allCases, id: \.self) { element in
                                 SwitchRow(title: element.title, isOn: Binding(get: { macChrome.hidden.contains(element) }, set: { macChrome.set(element, hidden: $0) }))
                             }
-                            ActionRow(title: "Restore All macOS Settings", icon: "arrow.uturn.backward", action: { macChrome.restoreAll() }).disabled(macChrome.hidden.isEmpty)
+                            ActionRow(title: "Restore All macOS Settings", icon: "arrow.uturn.backward", action: { macChrome.restoreAll() }).disabled(!macChrome.needsRestore)
                         }
                         PreferencesGroup(title: "Overview Shortcut", footer: "System-reserved shortcuts remain controlled by macOS.") {
                             ForEach(ShortcutChoice.all, id: \.title) { choice in

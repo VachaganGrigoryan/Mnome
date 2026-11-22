@@ -3,9 +3,11 @@ import XCTest
 
 final class MemoryStore: PreferenceStore {
     var values: [String: PrefValue]
+    var failing: Set<String> = [] // keys whose writes do not stick
     init(_ values: [String: PrefValue]) { self.values = values }
     func get(_ domain: String, _ key: String) -> PrefValue { values["\(domain)|\(key)"] ?? .absent }
     func set(_ domain: String, _ key: String, _ value: PrefValue) {
+        if failing.contains(key) { return }
         if value == .absent { values["\(domain)|\(key)"] = nil } else { values["\(domain)|\(key)"] = value }
     }
 }
@@ -50,5 +52,32 @@ final class MacChromeTests: XCTestCase {
         let store = MemoryStore(initial()); var snapshot = MacChromeSnapshot()
         snapshot.restore(.dock, store: store); snapshot.restoreAll(store: store)
         XCTAssertEqual(store.values, initial())
+    }
+    func testRestoreReportsOnlyTheElementsItTouched() {
+        let store = MemoryStore(initial()); var snapshot = MacChromeSnapshot()
+        snapshot.hide(.desktop, store: store)
+        XCTAssertEqual(snapshot.needsRestore, [.desktop])
+        XCTAssertEqual(snapshot.restoreAll(store: store), [.desktop])
+        XCTAssertTrue(snapshot.needsRestore.isEmpty)
+    }
+    func testCrashAfterCaptureStillOffersRestore() {
+        let store = MemoryStore(initial()); var snapshot = MacChromeSnapshot()
+        snapshot.capture(.dock, store: store) // the process died before `hidden` was recorded
+        store.set("com.apple.dock", "autohide-delay", .double(1000))
+        XCTAssertTrue(snapshot.hidden.isEmpty)
+        XCTAssertEqual(snapshot.needsRestore, [.dock])
+        snapshot.restoreAll(store: store)
+        XCTAssertEqual(store.values, initial())
+    }
+    func testFailedRestoreKeepsTheOriginal() {
+        let store = MemoryStore(initial()); var snapshot = MacChromeSnapshot()
+        snapshot.hide(.dock, store: store)
+        store.failing = ["autohide-delay"]
+        snapshot.restore(.dock, store: store)
+        XCTAssertEqual(snapshot.needsRestore, [.dock])
+        XCTAssertTrue(snapshot.hidden.contains(.dock))
+        store.failing = []
+        snapshot.restore(.dock, store: store)
+        XCTAssertEqual(store.values, initial()); XCTAssertTrue(snapshot.needsRestore.isEmpty)
     }
 }

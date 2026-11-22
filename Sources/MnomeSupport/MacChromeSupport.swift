@@ -45,14 +45,22 @@ public struct MacChromeSnapshot: Codable, Equatable {
         for setting in element.settings { store.set(setting.domain, setting.key, setting.hidden) }
         hidden.insert(element)
     }
+    /// Elements with anything left to put back, including originals captured just before a crash.
+    public var needsRestore: Set<MacElement> { hidden.union(MacElement.allCases.filter { $0.settings.contains { saved[Self.id($0)] != nil } }) }
+    /// An original is forgotten only once reading it back proves the write stuck.
     public mutating func restore(_ element: MacElement, store: PreferenceStore) {
         hidden.remove(element)
         let stillUsed = Set(hidden.flatMap { $0.settings.map(Self.id) })
         for setting in element.settings {
             let id = Self.id(setting)
             guard !stillUsed.contains(id), let original = saved[id] else { continue }
-            store.set(setting.domain, setting.key, original); saved[id] = nil
+            store.set(setting.domain, setting.key, original)
+            if store.get(setting.domain, setting.key) == original { saved[id] = nil } else { hidden.insert(element) }
         }
     }
-    public mutating func restoreAll(store: PreferenceStore) { for element in MacElement.allCases { restore(element, store: store) } }
+    @discardableResult public mutating func restoreAll(store: PreferenceStore) -> Set<MacElement> {
+        let touched = needsRestore
+        for element in touched { restore(element, store: store) }
+        return touched
+    }
 }

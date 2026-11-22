@@ -28,6 +28,7 @@ struct CFPreferencesStore: PreferenceStore {
     @Published private(set) var hidden: Set<MacElement>
     var changed: (() -> Void)?
     private var snapshot: MacChromeSnapshot
+    var needsRestore: Bool { !snapshot.needsRestore.isEmpty }
     private let store = CFPreferencesStore()
     private static let defaultsKey = "macChromeSnapshot"
     init() {
@@ -41,25 +42,32 @@ struct CFPreferencesStore: PreferenceStore {
         if hide { snapshot.hide(element, store: store) } else { snapshot.restore(element, store: store) }
         finish([element])
     }
-    func setAll(hidden hide: Bool) { for element in MacElement.allCases { if hide { snapshot.capture(element, store: store) } }; persist()
-        for element in MacElement.allCases { if hide { snapshot.hide(element, store: store) } else { snapshot.restore(element, store: store) } }
-        finish(MacElement.allCases) }
-    func restoreAll(wait: Bool = false) { guard !snapshot.hidden.isEmpty || !snapshot.saved.isEmpty else { return }; snapshot.restoreAll(store: store); finish(MacElement.allCases, wait: wait) }
+    func setAll(hidden hide: Bool) {
+        guard hide else { restoreAll(); return }
+        for element in MacElement.allCases { snapshot.capture(element, store: store) }; persist()
+        for element in MacElement.allCases { snapshot.hide(element, store: store) }
+        finish(MacElement.allCases)
+    }
+    func restoreAll(quitting: Bool = false) {
+        let touched = snapshot.restoreAll(store: store)
+        if !touched.isEmpty { finish(MacElement.allCases.filter(touched.contains), quitting: quitting) }
+    }
     private func persist() { if let data = try? JSONEncoder().encode(snapshot) { UserDefaults.standard.set(data, forKey: Self.defaultsKey) } }
-    private func finish(_ elements: [MacElement], wait: Bool = false) {
+    private func finish(_ elements: [MacElement], quitting: Bool = false) {
         persist(); hidden = snapshot.hidden
         var processes: [String] = []
         if elements.contains(.dock) { processes.append("Dock") }
         if elements.contains(.desktop) { processes += ["Finder", "WindowManager"] } else if elements.contains(.stageManager) { processes.append("WindowManager") }
-        for name in processes { let task = Process(); task.executableURL = URL(fileURLWithPath: "/usr/bin/killall"); task.arguments = [name]; try? task.run(); if wait { task.waitUntilExit() } } // launchd relaunches them with the new prefs
-        if elements.contains(.menuBar) { applyMenuBar() }
+        for name in processes { let task = Process(); task.executableURL = URL(fileURLWithPath: "/usr/bin/killall"); task.arguments = [name]; try? task.run(); if quitting { task.waitUntilExit() } } // launchd relaunches them with the new prefs
+        if elements.contains(.menuBar) { applyMenuBar(quitting: quitting) }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.changed?() }
     }
-    private func applyMenuBar() {
+    private func applyMenuBar(quitting: Bool) {
         let hide = store.get("NSGlobalDomain", "_HIHideMenuBar") == .bool(true)
         var error: NSDictionary?
         NSAppleScript(source: "tell application \"System Events\" to set autohide menu bar of dock preferences to \(hide)")?.executeAndReturnError(&error)
         if let error {
+            if quitting { NSLog("Mnome: could not restore the menu bar while quitting: %@", error); return } // never block quit with an alert
             let alert = NSAlert(); alert.messageText = "Could not change the macOS menu bar"
             alert.informativeText = (error[NSAppleScript.errorMessage] as? String ?? "Unknown error") + "\n\nAllow Mnome to control System Events in System Settings → Privacy & Security → Automation. Use Restore macOS Shell to return to your original settings."
             alert.runModal()

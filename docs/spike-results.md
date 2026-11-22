@@ -28,10 +28,16 @@ macOS 27.0.1 (26A434), 22 November 2026. Built-in display 1512×982 pt (notch, s
 | `visibleFrame` while hidden | Fresh process: built-in top gap 32 (the notch strip), external 0. A process already running kept reporting 34 and 31 | On the notched display windows already stay below a 32 pt bar. On others the window manager must keep them below it. Never trust `visibleFrame` in the process that hid the bar |
 | Bar level | Level 3 is pushed down. 24, 25 and 26 stay at the top edge and received 2 of 2 clicks on each display, on both sides of the notch (simulated clicks). No invisible window took clicks | |
 | Pointer pushed to the top edge | Level 24: the Mac menu bar appears over ours. 25 and 26: ours stays on top and the Mac menus cannot be reached | **Use level 24** |
+| Right Command+Tab, real keyboard | Session tap caught it every time, before the Dock: no app switcher, no app change (5 presses over two runs; the first run's detector was unreliable, the second had a working left Command+Tab control). Lone right Command detected once, no false taps. macOS never disabled the tap | Use the session tap. The symbolic-hotkey fallback is not needed |
+| Dark style | `SLSSetAppearanceThemeLegacy` switched and restored, as macOS reports it | Toggle. Not tried with automatic appearance on |
+| Night Light | `CBBlueLightClient setEnabled:` switched and restored. Status layout `BBBi{ii}{ii}QB`; read the second byte (`enabled`), `active` was true while off | Toggle. Not tried with a schedule |
 
-## Still open: needs the person at the Mac
+## Still open
 
 1. Parking apps with several windows, terminals and Electron editors.
-2. Right Command+Tab before the Dock sees it, with a real keyboard.
-3. Setting Bluetooth, Wi-Fi, dark style and Night Light.
-4. Display unplug, sleep and wake while windows are parked; journal entries whose app restarted.
+2. Setting Bluetooth and Wi-Fi.
+3. Display unplug, sleep and wake while windows are parked; journal entries whose app restarted.
+
+## Decision
+
+Parking, matching, capture, crash recovery, the key tap and the top bar all hold on 27.0.1. Phases 2 to 5 go as planned, with the bar at level 24. Workspaces stay off by default until open items 1 and 3 pass.

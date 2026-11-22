@@ -11,7 +11,7 @@ pub(crate) type WorkspaceId = u64;
 
 /// Group key for windows that do not belong to a workspace. Workspace ids start at 1.
 const NO_WORKSPACE: WorkspaceId = 0;
-pub(crate) const SCHEMA: u32 = 1;
+pub(crate) const SCHEMA: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Display {
@@ -31,12 +31,14 @@ pub(crate) enum Placement {
     },
 }
 
-/// Where a window should be. `Minimized` is always the person's choice, `Parked` always ours.
+/// Where a window should be. `Minimized` and `Hidden` (its app, with Cmd+H) are always the person's choice,
+/// `Parked` always ours. A hidden window may be anywhere: nobody sees it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Presence {
     Shown,
     Minimized,
+    Hidden,
     Parked,
 }
 
@@ -48,6 +50,7 @@ pub(crate) struct Window {
     pub workspace: WorkspaceId,
     pub placement: Placement,
     pub minimized: bool,
+    pub hidden: bool,
     /// Native full screen: left alone until it ends.
     pub fullscreen: bool,
     /// Cannot be parked, so it stays visible on every workspace.
@@ -177,6 +180,8 @@ pub(crate) struct Wm {
     workspaces: Vec<WorkspaceId>,
     current: WorkspaceId,
     next_workspace: WorkspaceId,
+    /// Off: every window is shown, and each keeps its workspace for later.
+    workspaces_on: bool,
     groups: Vec<Group>,
     focus: Option<Id>,
     /// Windows hidden by "show desktop", to bring back together.
@@ -195,6 +200,7 @@ impl Default for Wm {
             workspaces: vec![1, 2],
             current: 1,
             next_workspace: 3,
+            workspaces_on: true,
             groups: Vec::new(),
             focus: None,
             desktop: Vec::new(),
@@ -227,8 +233,15 @@ pub(crate) enum Event {
     Moved {
         id: Id,
         rect: Rect,
+        /// macOS moved it because the displays changed, so it keeps its workspace.
+        #[serde(default)]
+        by_system: bool,
     },
     Minimized {
+        id: Id,
+        on: bool,
+    },
+    Hidden {
         id: Id,
         on: bool,
     },
@@ -238,6 +251,10 @@ pub(crate) enum Event {
     },
     Sticky {
         id: Id,
+        on: bool,
+    },
+    /// The switch, or something that makes parking impossible.
+    WorkspacesOn {
         on: bool,
     },
     // Commands
@@ -295,6 +312,11 @@ pub(crate) enum Event {
         id: Id,
         workspace: WorkspaceId,
     },
+    /// Moves the window to a neighbouring workspace and goes along.
+    CarryWindow {
+        id: Id,
+        delta: i32,
+    },
     ShowDesktop,
     Cycle {
         backwards: bool,
@@ -312,8 +334,10 @@ impl Event {
                 | Self::Focused { .. }
                 | Self::Moved { .. }
                 | Self::Minimized { .. }
+                | Self::Hidden { .. }
                 | Self::Fullscreen { .. }
                 | Self::Sticky { .. }
+                | Self::WorkspacesOn { .. }
         )
     }
 }
@@ -337,7 +361,7 @@ impl Wm {
         let focus = self.focus;
         // The person's own move is already done; placing the window again would fight the drag.
         let reported = match &event {
-            Event::Moved { id, rect } => Some((*id, rect.normalized())),
+            Event::Moved { id, rect, .. } => Some((*id, rect.normalized())),
             _ => None,
         };
         let before: Vec<Before> = self
@@ -372,7 +396,10 @@ impl Wm {
                 {
                     ops.push(Op::Place { window: id, rect });
                 }
-                (Presence::Parked, Presence::Shown) => ops.push(Op::Unpark { window: id, rect }),
+                // A full-screen window is placed by macOS.
+                (Presence::Parked | Presence::Hidden, Presence::Shown) if !w.fullscreen => {
+                    ops.push(Op::Unpark { window: id, rect });
+                }
                 (Presence::Minimized, Presence::Shown) => {
                     ops.push(Op::Unminimize { window: id });
                     // It may have been minimized while parked, so always place it.
@@ -380,10 +407,10 @@ impl Wm {
                         ops.push(Op::Place { window: id, rect });
                     }
                 }
-                (Presence::Shown | Presence::Minimized, Presence::Parked) => {
+                (Presence::Shown | Presence::Minimized | Presence::Hidden, Presence::Parked) => {
                     ops.push(Op::Park { window: id });
                 }
-                (Presence::Shown | Presence::Parked, Presence::Minimized) => {
+                (Presence::Shown | Presence::Parked | Presence::Hidden, Presence::Minimized) => {
                     ops.push(Op::Minimize { window: id });
                 }
                 _ => {}
@@ -411,10 +438,25 @@ impl Wm {
             } => self.open(id, app, rect.normalized(), minimized, fullscreen),
             Event::Closed { id } => self.close(id),
             Event::Focused { id } | Event::Activate { id } => self.activate(id),
-            Event::Moved { id, rect } => self.moved(id, rect.normalized()),
+            Event::Moved {
+                id,
+                rect,
+                by_system,
+            } => self.moved(id, rect.normalized(), by_system),
+            Event::Hidden { id, on } => self.update(id, |w| w.hidden = on),
+            Event::WorkspacesOn { on } => self.workspaces_on = on,
             Event::Minimized { id, on } => self.minimized(id, on),
             Event::Minimize { id } => self.minimize(id),
-            Event::Fullscreen { id, on } => self.update(id, |w| w.fullscreen = on),
+            Event::Fullscreen { id, on } => {
+                // Whoever leaves full screen is looking at it.
+                let current = self.current;
+                self.update(id, |w| {
+                    if w.fullscreen && !on {
+                        w.workspace = current;
+                    }
+                    w.fullscreen = on;
+                });
+            }
             Event::Sticky { id, on } => {
                 self.detach(id);
                 let current = self.current;
@@ -439,6 +481,7 @@ impl Wm {
             Event::SetWorkspace { workspace } => self.set_workspace(workspace),
             Event::StepWorkspace { delta } => self.step_workspace(delta),
             Event::ToWorkspace { id, workspace } => self.move_to_workspace(id, workspace),
+            Event::CarryWindow { id, delta } => self.carry_window(id, delta),
             Event::ShowDesktop => self.show_desktop(),
             Event::Cycle { backwards } => self.cycle(backwards),
         }
@@ -487,7 +530,13 @@ impl Wm {
     fn presence(&self, w: &Window) -> Presence {
         if w.minimized {
             Presence::Minimized
-        } else if w.fullscreen || !self.has_workspace(w) || w.workspace == self.current {
+        } else if w.hidden {
+            Presence::Hidden
+        } else if w.fullscreen
+            || !self.workspaces_on
+            || !self.has_workspace(w)
+            || w.workspace == self.current
+        {
             Presence::Shown
         } else {
             Presence::Parked
@@ -603,8 +652,25 @@ impl Wm {
             self.windows[i].rect = rect;
         }
     }
+    /// The most recent shown window, but a full-screen one only when there is no other: reaching it leaves the desktop.
     fn focus_next(&mut self) {
-        self.focus = self.mru.iter().copied().find(|id| self.is_shown(*id));
+        self.focus = self.most_recent(|w| !w.fullscreen).or_else(|| {
+            let current = self.current;
+            self.most_recent(|w| w.workspace == current)
+        });
+    }
+    fn most_recent(&self, wanted: impl Fn(&Window) -> bool) -> Option<Id> {
+        self.mru.iter().copied().find(|id| {
+            self.window(*id)
+                .is_some_and(|w| self.presence(w) == Presence::Shown && wanted(w))
+        })
+    }
+    /// Windows hidden by "show desktop" belong to the workspace it was used on.
+    fn switch_to(&mut self, workspace: WorkspaceId) {
+        if self.current != workspace {
+            self.current = workspace;
+            self.desktop.clear();
+        }
     }
     fn detach(&mut self, id: Id) {
         for occupant in self.groups.iter_mut().flat_map(|g| &mut g.occupants) {
@@ -670,6 +736,7 @@ impl Wm {
             workspace: self.current,
             placement: Placement::Free,
             minimized,
+            hidden: false,
             fullscreen,
             sticky: false,
             rect,
@@ -687,12 +754,20 @@ impl Wm {
         }
     }
     /// The person moved or resized it. Frames of hidden windows are ours and never recorded.
-    fn moved(&mut self, id: Id, rect: Rect) {
+    fn moved(&mut self, id: Id, rect: Rect, by_system: bool) {
         let Some(w) = self.window(id) else { return };
         if w.rect == rect || w.fullscreen || self.presence(w) != Presence::Shown {
             return;
         }
+        let workspace = w.workspace;
         self.place_free(id, rect);
+        if by_system && self.window(id).is_some_and(|w| self.has_workspace(w)) {
+            // It may have been dropped as empty while its display was away. Ids are in order.
+            if let Err(at) = self.workspaces.binary_search(&workspace) {
+                self.workspaces.insert(at, workspace);
+            }
+            self.update(id, |w| w.workspace = workspace);
+        }
     }
     fn place_free(&mut self, id: Id, rect: Rect) {
         self.detach(id);
@@ -712,9 +787,17 @@ impl Wm {
     fn minimized(&mut self, id: Id, on: bool) {
         if on {
             self.minimize(id);
-        } else {
-            self.update(id, |w| w.minimized = false);
-            self.desktop.retain(|v| *v != id);
+            return;
+        }
+        let Some(w) = self.window(id).filter(|w| w.minimized) else {
+            return;
+        };
+        let workspace = self.has_workspace(w).then_some(w.workspace);
+        self.update(id, |w| w.minimized = false);
+        self.desktop.retain(|v| *v != id);
+        // From the Dock, say: whoever asked for it wants to see it.
+        if let Some(workspace) = workspace.filter(|_| self.workspaces_on) {
+            self.switch_to(workspace);
         }
     }
 
@@ -723,8 +806,11 @@ impl Wm {
     fn activate(&mut self, id: Id) {
         let Some(i) = self.index(id) else { return };
         self.windows[i].minimized = false;
-        if self.has_workspace(&self.windows[i]) {
-            self.current = self.windows[i].workspace;
+        self.windows[i].hidden = false;
+        let w = &self.windows[i];
+        // A full-screen window is seen without its workspace.
+        if self.has_workspace(w) && !w.fullscreen {
+            self.switch_to(w.workspace);
         }
         self.mru.retain(|v| *v != id);
         self.mru.insert(0, id);
@@ -864,24 +950,41 @@ impl Wm {
         self.place_free(id, rect);
     }
     fn set_workspace(&mut self, workspace: WorkspaceId) {
-        if !self.workspaces.contains(&workspace) || workspace == self.current {
+        if !self.workspaces_on || !self.workspaces.contains(&workspace) || workspace == self.current
+        {
             return;
         }
-        self.current = workspace;
-        self.desktop.clear();
+        self.switch_to(workspace);
+        // Its own windows before more recent ones on other displays.
+        let own = self
+            .most_recent(|w| self.has_workspace(w) && w.workspace == workspace && !w.fullscreen);
         self.focus_next();
+        self.focus = own.or(self.focus);
     }
-    fn step_workspace(&mut self, delta: i32) {
-        let Some(i) = self.workspaces.iter().position(|ws| *ws == self.current) else {
-            return;
-        };
+    fn neighbour(&self, workspace: WorkspaceId, delta: i32) -> Option<WorkspaceId> {
+        let i = self.workspaces.iter().position(|ws| *ws == workspace)?;
         let target = if delta < 0 {
             i.checked_sub(1)
         } else {
             i.checked_add(1)
         };
-        if let Some(workspace) = target.and_then(|i| self.workspaces.get(i)).copied() {
+        target.and_then(|i| self.workspaces.get(i)).copied()
+    }
+    fn step_workspace(&mut self, delta: i32) {
+        if let Some(workspace) = self.neighbour(self.current, delta) {
             self.set_workspace(workspace);
+        }
+    }
+    fn carry_window(&mut self, id: Id, delta: i32) {
+        let Some(w) = self.window(id).filter(|w| !w.fullscreen) else {
+            return;
+        };
+        if !self.workspaces_on || !self.has_workspace(w) {
+            return;
+        }
+        if let Some(workspace) = self.neighbour(w.workspace, delta) {
+            self.move_to_workspace(id, workspace);
+            self.activate(id);
         }
     }
     fn move_to_workspace(&mut self, id: Id, workspace: WorkspaceId) {
@@ -909,6 +1012,10 @@ impl Wm {
         } else {
             for id in ids {
                 self.update(id, |w| w.minimized = false);
+                // Hidden or moved elsewhere meanwhile: it stays in the Dock.
+                if !self.is_shown(id) {
+                    self.update(id, |w| w.minimized = true);
+                }
             }
             self.focus_next();
         }

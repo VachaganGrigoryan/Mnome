@@ -20,18 +20,20 @@ public enum WMDirection: String, Sendable { case left, right, up, down }
 /// One request to the core's `wm` operation.
 public enum WMEvent: Equatable, Sendable {
     case displays([WMDisplay], main: UInt64)
-    case opened(id: UInt64, app: String, rect: WMRect, minimized: Bool, fullscreen: Bool), closed(UInt64), focused(UInt64), moved(UInt64, WMRect)
-    case minimized(UInt64, Bool), fullscreen(UInt64, Bool), sticky(UInt64, Bool)
+    case opened(id: UInt64, app: String, rect: WMRect, minimized: Bool, fullscreen: Bool), closed(UInt64), focused(UInt64), moved(UInt64, WMRect, bySystem: Bool = false)
+    case minimized(UInt64, Bool), hidden(UInt64, Bool), fullscreen(UInt64, Bool), sticky(UInt64, Bool), workspacesOn(Bool)
     case activate(UInt64), minimize(UInt64), toggleMaximize(UInt64), restore(UInt64), snap(UInt64, WMSnap), center(UInt64), resize(UInt64, dw: Int, dh: Int), toDisplay(UInt64, WMDirection)
-    case setWorkspace(UInt64), stepWorkspace(Int), toWorkspace(UInt64, UInt64), showDesktop, cycle(backwards: Bool)
+    case setWorkspace(UInt64), stepWorkspace(Int), toWorkspace(UInt64, UInt64), carryWindow(UInt64, Int), showDesktop, cycle(backwards: Bool)
     public var json: [String: Any] {
         switch self {
         case let .displays(all, main): ["type": "displays", "displays": all.map(\.json), "main": main]
         case let .opened(id, app, rect, minimized, fullscreen): ["type": "opened", "id": id, "app": app, "rect": rect.json, "minimized": minimized, "fullscreen": fullscreen]
         case let .closed(id): ["type": "closed", "id": id]
         case let .focused(id): ["type": "focused", "id": id]
-        case let .moved(id, rect): ["type": "moved", "id": id, "rect": rect.json]
+        case let .moved(id, rect, bySystem): ["type": "moved", "id": id, "rect": rect.json, "by_system": bySystem]
         case let .minimized(id, on): ["type": "minimized", "id": id, "on": on]
+        case let .hidden(id, on): ["type": "hidden", "id": id, "on": on]
+        case let .workspacesOn(on): ["type": "workspaces_on", "on": on]
         case let .fullscreen(id, on): ["type": "fullscreen", "id": id, "on": on]
         case let .sticky(id, on): ["type": "sticky", "id": id, "on": on]
         case let .activate(id): ["type": "activate", "id": id]
@@ -45,6 +47,7 @@ public enum WMEvent: Equatable, Sendable {
         case let .setWorkspace(ws): ["type": "set_workspace", "workspace": ws]
         case let .stepWorkspace(delta): ["type": "step_workspace", "delta": delta]
         case let .toWorkspace(id, ws): ["type": "to_workspace", "id": id, "workspace": ws]
+        case let .carryWindow(id, delta): ["type": "carry_window", "id": id, "delta": delta]
         case .showDesktop: ["type": "show_desktop"]
         case let .cycle(backwards): ["type": "cycle", "backwards": backwards]
         }
@@ -68,8 +71,12 @@ public enum WMOp: Equatable, Sendable {
 }
 /// The part of the core's state the shell shows.
 public struct WMState: Decodable, Equatable, Sendable {
-    public struct Window: Decodable, Equatable, Sendable { public let id: UInt64, app: String, display: UInt64, workspace: UInt64, minimized: Bool, fullscreen: Bool, sticky: Bool, rect: WMRect }
-    public let windows: [Window], workspaces: [UInt64], current: UInt64, focus: UInt64?, main: UInt64
+    public struct Window: Decodable, Equatable, Sendable { public let id: UInt64, app: String, display: UInt64, workspace: UInt64, minimized: Bool, hidden: Bool, fullscreen: Bool, sticky: Bool, rect: WMRect }
+    public let windows: [Window], workspaces: [UInt64], current: UInt64, focus: UInt64?, main: UInt64, mru: [UInt64], workspacesOn: Bool
+    private enum CodingKeys: String, CodingKey { case windows, workspaces, current, focus, main, mru, workspacesOn = "workspaces_on" }
     public func window(_ id: UInt64) -> Window? { windows.first { $0.id == id } }
+    /// Waiting in the corner: as the core's `presence`.
+    public func isParked(_ id: UInt64) -> Bool { window(id).map { workspacesOn && !$0.minimized && !$0.hidden && !$0.fullscreen && !$0.sticky && $0.display == main && $0.workspace != current } ?? false }
+    public func isShown(_ id: UInt64) -> Bool { window(id).map { !$0.minimized && !$0.hidden && !isParked(id) } ?? false }
     public init(json: Any) throws { self = try JSONDecoder().decode(WMState.self, from: JSONSerialization.data(withJSONObject: json)) }
 }

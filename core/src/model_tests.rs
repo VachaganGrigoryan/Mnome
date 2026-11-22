@@ -50,6 +50,13 @@ fn open(wm: &mut Wm, id: Id) {
     open_at(wm, id, FREE);
     go(wm, Event::Focused { id });
 }
+fn moved(id: Id, rect: Rect) -> Event {
+    Event::Moved {
+        id,
+        rect,
+        by_system: false,
+    }
+}
 fn get(wm: &Wm, id: Id) -> &Window {
     wm.window(id).expect("window")
 }
@@ -298,16 +305,7 @@ fn hidden_windows_are_never_placed_and_their_frames_are_never_recorded() {
     go(&mut w, Event::ToggleMaximize { id: 1 });
     go(&mut w, Event::SetWorkspace { workspace: 2 });
     let parked = Rect::new(-1279, 768, 1280, 768);
-    assert!(
-        go(
-            &mut w,
-            Event::Moved {
-                id: 1,
-                rect: parked
-            }
-        )
-        .is_empty()
-    );
+    assert!(go(&mut w, moved(1, parked)).is_empty());
     let mut taller = displays();
     taller[0].work = Rect::new(0, 40, 1280, 760);
     assert!(
@@ -436,13 +434,7 @@ fn moving_between_displays_keeps_size_position_and_maximized() {
     // A window brought to the main display joins the workspace on screen.
     go(&mut w, right());
     go(&mut w, Event::SetWorkspace { workspace: 2 });
-    go(
-        &mut w,
-        Event::Moved {
-            id: 1,
-            rect: Rect::new(10, 50, 400, 300),
-        },
-    );
+    go(&mut w, moved(1, Rect::new(10, 50, 400, 300)));
     assert_eq!(get(&w, 1).workspace, 2);
 }
 
@@ -534,10 +526,15 @@ fn sticky_and_fullscreen_windows_are_never_parked() {
     open(&mut w, 2);
     go(&mut w, Event::Sticky { id: 1, on: true });
     go(&mut w, Event::Fullscreen { id: 2, on: true });
-    assert!(go(&mut w, Event::SetWorkspace { workspace: 2 }).is_empty());
-    // Leaving full screen on another workspace parks it.
     assert_eq!(
-        go(&mut w, Event::Fullscreen { id: 2, on: false }),
+        go(&mut w, Event::SetWorkspace { workspace: 2 }),
+        [Op::Focus { window: 1 }]
+    );
+    // Whoever leaves full screen is looking at it, so it joins the workspace in view.
+    assert!(go(&mut w, Event::Fullscreen { id: 2, on: false }).is_empty());
+    assert_eq!(get(&w, 2).workspace, 2);
+    assert_eq!(
+        go(&mut w, Event::StepWorkspace { delta: 1 }),
         [Op::Park { window: 2 }]
     );
     // A window that refused to park is reported sticky and simply shown again.
@@ -671,7 +668,7 @@ fn an_observed_move_is_never_sent_back() {
     open(&mut w, 1);
     for x in [120, 180, 260] {
         let rect = Rect::new(x, 100, 400, 300);
-        assert!(go(&mut w, Event::Moved { id: 1, rect }).is_empty());
+        assert!(go(&mut w, moved(1, rect)).is_empty());
         assert_eq!(get(&w, 1).rect, rect);
     }
 }
@@ -698,4 +695,341 @@ fn state_survives_json_and_other_schemas_are_refused() {
     json["schema"] = 99.into();
     let other: Wm = serde_json::from_value(json).expect("parses");
     assert!(other.check().is_err());
+}
+
+#[test]
+fn turning_workspaces_off_shows_everything_and_on_again_restores_them() {
+    let mut w = wm();
+    open(&mut w, 1);
+    go(&mut w, Event::SetWorkspace { workspace: 2 });
+    open(&mut w, 2);
+    assert_eq!(
+        go(&mut w, Event::WorkspacesOn { on: false }),
+        [Op::Unpark {
+            window: 1,
+            rect: FREE
+        }]
+    );
+    assert!(go(&mut w, Event::StepWorkspace { delta: -1 }).is_empty());
+    assert_eq!(w.current, 2);
+    assert_eq!(
+        go(&mut w, Event::WorkspacesOn { on: true }),
+        [Op::Park { window: 1 }]
+    );
+}
+
+#[test]
+fn hidden_apps_are_left_alone_never_focused_and_placed_when_shown() {
+    let mut w = wm();
+    open(&mut w, 1);
+    open(&mut w, 2);
+    assert!(go(&mut w, Event::Hidden { id: 2, on: true }).is_empty());
+    assert_eq!(w.focus, Some(1));
+    assert_eq!(
+        go(&mut w, Event::SetWorkspace { workspace: 2 }),
+        [Op::Park { window: 1 }]
+    );
+    // Shown again from elsewhere, it belongs on its own workspace.
+    assert_eq!(
+        go(&mut w, Event::Hidden { id: 2, on: false }),
+        [Op::Park { window: 2 }]
+    );
+    go(&mut w, Event::Hidden { id: 2, on: true });
+    assert_eq!(
+        go(&mut w, Event::Activate { id: 2 }),
+        [
+            Op::Unpark {
+                window: 1,
+                rect: FREE
+            },
+            Op::Unpark {
+                window: 2,
+                rect: FREE
+            },
+            Op::Focus { window: 2 },
+        ]
+    );
+}
+
+#[test]
+fn carrying_a_window_follows_it_and_stops_at_the_ends() {
+    let mut w = wm();
+    open(&mut w, 1);
+    open(&mut w, 2);
+    assert!(go(&mut w, Event::CarryWindow { id: 2, delta: -1 }).is_empty());
+    assert_eq!(
+        go(&mut w, Event::CarryWindow { id: 2, delta: 1 }),
+        [Op::Park { window: 1 }]
+    );
+    assert_eq!((w.current, w.focus), (2, Some(2)));
+    assert_eq!(w.workspaces, [1, 2, 3]);
+    go(&mut w, Event::CarryWindow { id: 2, delta: -1 });
+    assert_eq!((w.current, presence(&w, 1)), (1, Presence::Shown));
+}
+
+#[test]
+fn switching_after_show_desktop_forgets_what_it_hid() {
+    let mut w = wm();
+    open(&mut w, 1);
+    go(&mut w, Event::SetWorkspace { workspace: 2 });
+    open(&mut w, 2);
+    go(&mut w, Event::ShowDesktop);
+    go(&mut w, Event::Activate { id: 1 });
+    // Now it hides this workspace instead of reviving window 2 behind the scenes.
+    assert_eq!(go(&mut w, Event::ShowDesktop), [Op::Minimize { window: 1 }]);
+    assert_eq!(presence(&w, 2), Presence::Minimized);
+}
+
+#[test]
+fn a_window_brought_back_from_the_dock_takes_the_person_along() {
+    let mut w = wm();
+    open(&mut w, 1);
+    go(&mut w, Event::Minimize { id: 1 });
+    go(&mut w, Event::SetWorkspace { workspace: 2 });
+    open(&mut w, 2);
+    go(&mut w, Event::Minimized { id: 1, on: false });
+    assert_eq!((w.current, presence(&w, 1)), (1, Presence::Shown));
+}
+
+#[test]
+fn full_screen_windows_do_not_pull_the_person_back() {
+    let mut w = wm();
+    open(&mut w, 1);
+    go(&mut w, Event::Fullscreen { id: 1, on: true });
+    go(&mut w, Event::SetWorkspace { workspace: 2 });
+    assert_eq!(w.focus, None);
+    go(&mut w, Event::Focused { id: 1 });
+    assert_eq!((w.current, w.focus), (2, Some(1)));
+}
+
+#[test]
+fn switching_prefers_the_workspaces_own_windows_to_another_displays() {
+    let mut w = wm();
+    open(&mut w, 1);
+    go(&mut w, Event::SetWorkspace { workspace: 2 });
+    open_at(&mut w, 2, Rect::new(2000, 100, 400, 300));
+    go(&mut w, Event::Focused { id: 2 });
+    go(&mut w, Event::SetWorkspace { workspace: 1 });
+    assert_eq!(w.focus, Some(1));
+}
+
+#[test]
+fn a_display_that_returns_finds_its_workspaces_again() {
+    let mut w = wm();
+    open(&mut w, 1);
+    go(&mut w, Event::SetWorkspace { workspace: 2 });
+    open(&mut w, 2);
+    let (both, side) = (displays(), vec![displays()[1]]);
+    go(
+        &mut w,
+        Event::Displays {
+            displays: side,
+            main: SIDE,
+        },
+    );
+    assert_eq!(presence(&w, 1), Presence::Parked);
+    go(
+        &mut w,
+        Event::Displays {
+            displays: both,
+            main: MAIN,
+        },
+    );
+    for id in [1, 2] {
+        go(
+            &mut w,
+            Event::Moved {
+                id,
+                rect: FREE,
+                by_system: true,
+            },
+        );
+    }
+    assert_eq!((get(&w, 1).workspace, get(&w, 2).workspace), (1, 2));
+    assert_eq!(presence(&w, 1), Presence::Parked);
+    // The person's own move joins what they are looking at.
+    go(&mut w, moved(2, Rect::new(2000, 100, 400, 300)));
+    go(&mut w, Event::SetWorkspace { workspace: 1 });
+    go(&mut w, moved(2, FREE));
+    assert_eq!(get(&w, 2).workspace, 1);
+}
+
+/// Small, fast and repeatable; quality does not matter here.
+struct Random(u64);
+impl Random {
+    fn below(&mut self, n: u64) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0 % n
+    }
+    fn chance(&mut self) -> bool {
+        self.below(2) == 0
+    }
+}
+
+fn at(id: Id) -> usize {
+    usize::try_from(id).expect("small")
+}
+
+/// What macOS would show, following nothing but the ops and the observations.
+#[derive(Clone, Copy, Default)]
+struct Real {
+    parked: bool,
+    minimized: bool,
+}
+
+fn any_event(r: &mut Random, w: &Wm, real: &[Real]) -> Event {
+    let id = r.below(6) + 1;
+    let on = r.chance();
+    let delta = if r.chance() { 1 } else { -1 };
+    let rect = Rect::new(
+        i32::try_from(r.below(3000)).expect("small"),
+        i32::try_from(r.below(700)).expect("small"),
+        400,
+        300,
+    );
+    let workspace = r.below(w.next_workspace) + 1;
+    let side = displays()[1];
+    match r.below(24) {
+        0..=2 if w.window(id).is_none() => Event::Opened {
+            id,
+            app: format!("app{}", id % 2),
+            rect,
+            minimized: real[at(id)].minimized,
+            fullscreen: false,
+        },
+        0 => Event::Closed { id },
+        1 | 2 => Event::Focused { id },
+        3 => Event::Moved {
+            id,
+            rect,
+            by_system: on,
+        },
+        4 => Event::Minimized { id, on },
+        5 => Event::Hidden { id, on },
+        // Only a window in sight can be made full screen.
+        6 if !on || w.is_shown(id) => Event::Fullscreen { id, on },
+        6 => Event::Focused { id },
+        7 => Event::Sticky { id, on },
+        8 => Event::WorkspacesOn { on },
+        9 => match r.below(4) {
+            0 => Event::Displays {
+                displays: vec![displays()[0]],
+                main: MAIN,
+            },
+            1 => Event::Displays {
+                displays: vec![side],
+                main: SIDE,
+            },
+            2 => Event::Displays {
+                displays: displays(),
+                main: SIDE,
+            },
+            _ => Event::Displays {
+                displays: displays(),
+                main: MAIN,
+            },
+        },
+        10 | 11 => Event::Activate { id },
+        12 => Event::Minimize { id },
+        13 => Event::ToggleMaximize { id },
+        14 => Event::Snap {
+            id,
+            to: if on { Snap::Left } else { Snap::TopRight },
+        },
+        15 => Event::Restore { id },
+        16 => Event::ToDisplay {
+            id,
+            direction: if on {
+                Direction::Left
+            } else {
+                Direction::Right
+            },
+        },
+        17 => Event::SetWorkspace { workspace },
+        18 | 19 => Event::StepWorkspace { delta },
+        20 => Event::ToWorkspace { id, workspace },
+        21 => Event::CarryWindow { id, delta },
+        22 => Event::ShowDesktop,
+        _ => Event::Cycle { backwards: on },
+    }
+}
+
+fn check_invariants(w: &Wm, real: &[Real]) {
+    assert!(w.workspaces.len() >= 2);
+    assert!(w.workspaces.contains(&w.current), "current exists");
+    let occupied = |ws: &WorkspaceId| {
+        w.windows
+            .iter()
+            .any(|v| w.has_workspace(v) && v.workspace == *ws)
+    };
+    assert!(w.workspaces.last().is_some_and(|ws| !occupied(ws)));
+    for ws in &w.workspaces[..w.workspaces.len() - 1] {
+        assert!(occupied(ws) || *ws == w.current || w.workspaces.len() == 2);
+    }
+    if let Some(id) = w.focus {
+        assert_eq!(presence(w, id), Presence::Shown, "focus is visible");
+    }
+    let (mut ids, mut recent): (Vec<Id>, Vec<Id>) =
+        (w.windows.iter().map(|v| v.id).collect(), w.mru.clone());
+    ids.sort_unstable();
+    recent.sort_unstable();
+    assert_eq!(ids, recent, "every window is in the recent list once");
+    for v in &w.windows {
+        let has = real[at(v.id)];
+        if w.has_workspace(v) {
+            assert!(w.workspaces.contains(&v.workspace), "membership exists");
+        }
+        match w.presence(v) {
+            Presence::Shown if v.fullscreen => assert!(!has.minimized),
+            Presence::Shown => assert!(!has.parked && !has.minimized, "shown is in sight"),
+            Presence::Minimized => assert!(has.minimized, "minimized is in the Dock"),
+            Presence::Hidden => {}
+            Presence::Parked => {
+                assert!(has.parked && !has.minimized, "parked is in the corner");
+                assert!(w.workspaces_on && v.display == w.main && !v.sticky && !v.fullscreen);
+            }
+        }
+    }
+}
+
+#[test]
+fn nothing_the_person_or_macos_does_breaks_the_rules() {
+    for seed in 1..=400 {
+        let mut r = Random(0x9E37_79B9_7F4A_7C15_u64.wrapping_mul(seed) | 1);
+        let (mut w, mut real) = (wm(), [Real::default(); 8]);
+        let mut log = Vec::new();
+        for _ in 0..200 {
+            let event = any_event(&mut r, &w, &real);
+            // What macOS has already done when it reports it.
+            match event {
+                Event::Minimized { id, on } if w.window(id).is_some() => {
+                    real[at(id)].minimized = on;
+                }
+                Event::Closed { id } => real[at(id)] = Real::default(),
+                _ => {}
+            }
+            log.push(format!("{event:?}"));
+            for op in go(&mut w, event) {
+                log.push(format!("    {op:?}"));
+                match op {
+                    Op::Unminimize { window } => real[at(window)].minimized = false,
+                    Op::Minimize { window } => real[at(window)].minimized = true,
+                    Op::Unpark { window, .. } => real[at(window)].parked = false,
+                    Op::Place { window, .. } => real[at(window)].parked = false,
+                    Op::Park { window } => real[at(window)].parked = true,
+                    Op::Focus { window } => {
+                        assert_eq!(presence(&w, window), Presence::Shown);
+                    }
+                }
+            }
+            let checked = std::panic::catch_unwind(|| check_invariants(&w, &real));
+            assert!(
+                checked.is_ok(),
+                "seed {seed}\n{}",
+                log[log.len().saturating_sub(40)..].join("\n")
+            );
+        }
+    }
 }

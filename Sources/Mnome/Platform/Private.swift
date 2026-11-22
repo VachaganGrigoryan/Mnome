@@ -4,6 +4,9 @@ import ApplicationServices
 enum Private {
     private typealias GetWindow = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
     private static let getWindow: GetWindow? = dlsym(dlopen(nil, RTLD_NOW), "_AXUIElementGetWindow").map { unsafeBitCast($0, to: GetWindow.self) }
+    private static let lock = dlopen("/System/Library/PrivateFrameworks/login.framework/login", RTLD_NOW).flatMap { dlsym($0, "SACLockScreenImmediate") }.map { unsafeBitCast($0, to: (@convention(c) () -> Int32).self) }
+    /// False when this macOS cannot lock this way.
+    static func lockScreen() -> Bool { lock.map { _ = $0(); return true } ?? false }
     /// The window server's number for an Accessibility window.
     static func windowID(_ element: AXUIElement) -> CGWindowID? {
         var id: CGWindowID = 0

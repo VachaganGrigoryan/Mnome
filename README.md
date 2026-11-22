@@ -32,6 +32,12 @@ Windows of other workspaces are parked in a free bottom corner of the main displ
 
 `.build/debug/Mnome --engine-check` drives the real engine against four windows of its own for about 40 seconds (snapping, parking, fast switching, a hung app, a crash, quitting) and exits with the number of failures. It moves no other window, but its windows take focus.
 
+## Keyboard
+
+Right Command is Super: tapped alone it opens or closes Activities, and with another key it runs GNOME's shortcuts (Keyboard Shortcuts lists them, Preferences → Keyboard changes them or makes Right Option the Super key). Only the listed combinations are taken; every other Right Command combination, and all of Left Command, reaches apps untouched. Shortcuts are physical keys, so they stay in place when the keyboard layout changes.
+
+Listening needs Accessibility and stops while macOS protects a password field; Control–Option–Space still opens Activities then. No key is stored or logged. Shortcuts act on the window in front, and do nothing when that is a dialog or a window Mnome does not track.
+
 ## Top bar
 
 Mnome displays a 32-point GNOME-inspired bar beneath the native menu/notch region on each display. Activities toggles the overview; the center shows local date/time, and the Quick Settings popover includes network and battery toggles, top bar/dock switches, shortcut and favorites sections, and System Settings links. Status does not guarantee internet connectivity.

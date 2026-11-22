@@ -70,7 +70,7 @@ fn cells(wm: &Wm, k: GroupKey) -> Vec<Rect> {
 }
 
 #[test]
-fn maximize_restores_the_free_frame_and_then_minimizes() {
+fn maximize_restores_the_free_frame_and_restoring_again_does_nothing() {
     let mut w = wm();
     open(&mut w, 1);
     open(&mut w, 2);
@@ -84,9 +84,10 @@ fn maximize_restores_the_free_frame_and_then_minimizes() {
             Op::Focus { window: 1 }
         ]
     );
-    go(&mut w, Event::RestoreOrMinimize { id: 1 });
+    go(&mut w, Event::Restore { id: 1 });
     assert_eq!(get(&w, 1).rect, FREE);
-    let ops = go(&mut w, Event::RestoreOrMinimize { id: 1 });
+    assert!(go(&mut w, Event::Restore { id: 1 }).is_empty());
+    let ops = go(&mut w, Event::Minimize { id: 1 });
     assert_eq!(ops, [Op::Focus { window: 2 }, Op::Minimize { window: 1 }]);
     assert_eq!(presence(&w, 1), Presence::Minimized);
 }
@@ -116,6 +117,22 @@ fn halves_share_a_boundary_and_minimizing_vacates_the_cell() {
     go(&mut w, Event::Activate { id: 1 });
     assert_eq!(get(&w, 1).rect, FREE);
     assert!(matches!(get(&w, 3).placement, Placement::Tiled { .. }));
+}
+
+#[test]
+fn tiling_to_the_same_half_again_restores() {
+    let mut w = wm();
+    open(&mut w, 1);
+    open(&mut w, 2);
+    snap(&mut w, 1, Snap::Left);
+    snap(&mut w, 2, Snap::Right);
+    snap(&mut w, 1, Snap::Left);
+    assert_eq!(get(&w, 1).rect, FREE);
+    assert!(matches!(get(&w, 2).placement, Placement::Tiled { .. }));
+    // From a quarter, the half is a step up, not a toggle.
+    snap(&mut w, 1, Snap::TopLeft);
+    snap(&mut w, 1, Snap::Left);
+    assert_eq!(get(&w, 1).rect, Rect::new(0, 32, 640, 768));
 }
 
 #[test]

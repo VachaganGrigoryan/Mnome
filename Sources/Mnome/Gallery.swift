@@ -12,6 +12,8 @@ import SwiftUI
         }
         try save(TopBarView(status: status, model: model, dock: dock, macChrome: chrome, activities: {}, actions: QuickActions()), CGSize(width: 1280, height: 32), "top-bar", directory)
         try save(QuickSettingsView(status: status, model: model, dock: dock, macChrome: chrome, actions: QuickActions(), dismiss: {}).shellTheme(), nil, "quick-settings", directory)
+        try save(ScrollView { VStack(alignment: .leading, spacing: 20) { KeyboardPreferences() }.padding(24) }.mnomeTheme().background(ThemePalette.background), CGSize(width: 560, height: 1500), "preferences-keyboard", directory)
+        try save(ShortcutsView().mnomeTheme().background(ThemePalette.background), CGSize(width: 520, height: 1100), "shortcuts", directory)
         try save(DockView(model: dock), CGSize(width: 440, height: 80), "dash", directory)
     }
     private static func save(_ view: some View, _ size: CGSize?, _ name: String, _ directory: URL) throws {

@@ -250,7 +250,7 @@ pub(crate) enum Event {
     ToggleMaximize {
         id: Id,
     },
-    RestoreOrMinimize {
+    Restore {
         id: Id,
     },
     Snap {
@@ -424,7 +424,7 @@ impl Wm {
                 });
             }
             Event::ToggleMaximize { id } => self.toggle_maximize(id),
-            Event::RestoreOrMinimize { id } => self.restore_or_minimize(id),
+            Event::Restore { id } => self.restore(id),
             Event::Snap { id, to } => self.snap(id, to),
             Event::Tile { id, layout, cell } => self.tile(id, layout, cell),
             Event::Center { id } => self.center(id),
@@ -754,18 +754,19 @@ impl Wm {
         });
         self.activate(id);
     }
-    fn restore_or_minimize(&mut self, id: Id) {
-        match self.window(id).map(|w| w.placement) {
-            Some(Placement::Free) => self.minimize(id),
-            Some(_) => {
-                self.detach(id);
-                self.update(id, |w| {
-                    w.placement = Placement::Free;
-                    w.rect = w.restore;
-                });
-            }
-            None => {}
+    /// Back to the free frame. A free window stays as it is, as in GNOME.
+    fn restore(&mut self, id: Id) {
+        if self
+            .window(id)
+            .is_none_or(|w| w.placement == Placement::Free)
+        {
+            return;
         }
+        self.detach(id);
+        self.update(id, |w| {
+            w.placement = Placement::Free;
+            w.rect = w.restore;
+        });
     }
     fn center(&mut self, id: Id) {
         let Some(w) = self.window(id) else { return };
@@ -1008,6 +1009,17 @@ impl Wm {
             Snap::TopRight => (1, false, true),
             Snap::BottomRight => (1, true, true),
         };
+        // Tiling to the half it already fills puts it back, as in GNOME.
+        if !split
+            && self.group(key).is_some_and(|g| {
+                g.columns.len() == 3
+                    && g.rows[column].len() == 2
+                    && g.occupants.get(g.first_cell(column)) == Some(&Some(id))
+            })
+        {
+            self.restore(id);
+            return;
+        }
         if self.group(key).is_none_or(|g| g.columns.len() != 3) {
             self.replace_group(key, Layout::Columns);
         }

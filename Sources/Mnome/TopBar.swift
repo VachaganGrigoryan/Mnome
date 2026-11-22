@@ -10,6 +10,8 @@ import MnomeSupport
     @Published var batteryPercent: Int?
     @Published var charging = false
     @Published var network = "Checking network connection"
+    /// The display whose quick settings were asked for.
+    @Published var menuRequest: (id: UUID, display: UInt64)?
     private var monitor: NWPathMonitor?
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
@@ -69,6 +71,7 @@ struct TopBarView: View {
     @ObservedObject var macChrome: MacChromeController
     let activities: () -> Void
     let actions: QuickActions
+    var display: UInt64 = 0
     @State private var showingMenu = false
     private var statusLabel: String { "System status and Mnome settings, \(status.battery ?? "No battery"), \(status.network)" }
     var body: some View {
@@ -90,6 +93,7 @@ struct TopBarView: View {
                 }
             }.padding(.horizontal, 8)
         }.foregroundStyle(.white).frame(height: 32).background(ShellPalette.panel).shellTheme()
+        .onChange(of: status.menuRequest?.id) { _, _ in if status.menuRequest?.display == display { showingMenu.toggle() } }
     }
 }
 
@@ -196,11 +200,13 @@ final class TopBarPanel: NSPanel {
             let panel = TopBarPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false; panel.level = .floating
             panel.collectionBehavior = [.canJoinAllSpaces, .stationary]; panel.isOpaque = true
-            panel.contentView = NSHostingView(rootView: TopBarView(status: status, model: model, dock: dock, macChrome: macChrome, activities: activities, actions: actions))
+            panel.contentView = NSHostingView(rootView: TopBarView(status: status, model: model, dock: dock, macChrome: macChrome, activities: activities, actions: actions, display: WindowManager.displayID(screen)))
             panel.orderFrontRegardless(); panels.append(panel)
         }
     }
     func focus() { NSApp.activate(); panels.first?.makeKeyAndOrderFront(nil) }
+    /// On the display under the pointer.
+    func toggleQuickSettings() { guard enabled, let screen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main else { return }; status.menuRequest = (UUID(), WindowManager.displayID(screen)) }
     func stop() {
         if let observer { NotificationCenter.default.removeObserver(observer) }; observer = nil
         status.stop(); panels.forEach { $0.close() }; panels = []

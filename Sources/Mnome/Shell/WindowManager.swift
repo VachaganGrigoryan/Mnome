@@ -66,6 +66,11 @@ import MnomeSupport
     /// True when the window is known exactly, so no guessing by title is needed.
     func focus(_ id: UInt64) -> Bool { guard running, state?.window(id) != nil else { return false }; send(.activate(id)); raise(id, after: chains[id]); return true }
 
+    /// For shortcuts: acts on the window in front, or on nothing when that is not a window we manage.
+    func withFocused(_ make: @escaping (UInt64) -> WMEvent) {
+        guard running else { return }
+        Task { if let id = await registry.focusedWindow(), state?.window(id) != nil { send(make(id)) } }
+    }
     private func observe(_ event: RegistryEvent) {
         switch event {
         case let .opened(w):

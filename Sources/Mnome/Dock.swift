@@ -3,7 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import MnomeSupport
 
-struct DockItem: Identifiable { let id: String; let name: String; let url: URL; let pinned: Bool; let running: Bool }
+struct DockItem: Identifiable, Equatable { let id: String; let name: String; let url: URL; let pinned: Bool; let running: Bool }
 @MainActor final class DockModel: ObservableObject {
     @Published var items: [DockItem] = []
     @Published var favorites: [Favorite] = []
@@ -13,7 +13,11 @@ struct DockItem: Identifiable { let id: String; let name: String; let url: URL; 
     private let store = FavoritesStore()
     private var observers: [NSObjectProtocol] = []
     private var revision = UUID()
-    static func identity(_ url: URL) -> String { Bundle(url: url)?.bundleIdentifier ?? url.standardizedFileURL.path }
+    private static var identities: [URL: String] = [:] // every app switch asks for all of them
+    static func identity(_ url: URL) -> String {
+        if let known = identities[url] { return known }
+        let id = Bundle(url: url)?.bundleIdentifier ?? url.standardizedFileURL.path; identities[url] = id; return id
+    }
     func start() {
         favorites = store.load {
             ["com.apple.finder", "com.apple.Safari", "com.apple.Terminal", "com.apple.systempreferences"].compactMap { id in
@@ -47,7 +51,7 @@ struct DockItem: Identifiable { let id: String; let name: String; let url: URL; 
     }
     func moveToStart(_ id: String) { if let first = favorites.first { move(id, before: first.id) } }
     func moveToEnd(_ id: String) { favorites = FavoritesStore.movedToEnd(favorites, id: id); save() }
-    private func save() { store.save(favorites); refresh() }
+    private func save() { store.save(favorites); changed?(); refresh() }
     func refresh() {
         revision = UUID(); let current = revision
         let pinned = favorites.compactMap { favorite -> (Favorite, URL)? in resolved(favorite).map { (favorite, $0) } }
@@ -62,12 +66,11 @@ struct DockItem: Identifiable { let id: String; let name: String; let url: URL; 
                 guard let id = value["id"] as? String, let url = lookup[id], let name = value["name"] as? String else { return nil }
                 return DockItem(id: id, name: name, url: url, pinned: value["pinned"] as? Bool ?? false, running: value["running"] as? Bool ?? false)
             }
-            Task { @MainActor in guard self.revision == current else { return }; self.items = result; self.changed?() }
+            Task { @MainActor in guard self.revision == current, self.items != result else { return }; self.items = result; self.changed?() }
         }
     }
     func open(_ item: DockItem) {
         beforeOpen?()
-        if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL.map(Self.identity) == item.id && $0.activationPolicy == .regular }) { app.activate(); return }
         NSWorkspace.shared.openApplication(at: item.url, configuration: .init()) { _, error in
             if let error { Task { @MainActor in let alert = NSAlert(); alert.messageText = "Could not open \(item.name)"; alert.informativeText = error.localizedDescription; alert.runModal() } }
         }

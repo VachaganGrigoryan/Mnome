@@ -308,10 +308,11 @@ struct PreferencesView: View {
     @State private var page = "appearance"
     var body: some View {
         VStack(spacing: 0) {
-            HeaderBar { ViewSwitcher(selection: $page, pages: [("appearance", "Appearance", "paintbrush"), ("shell", "Shell", "menubar.rectangle"), ("dash", "Dash", "dock.rectangle")]) }
+            HeaderBar { ViewSwitcher(selection: $page, pages: [("appearance", "Appearance", "paintbrush"), ("shell", "Shell", "menubar.rectangle"), ("dash", "Dash", "dock.rectangle"), ("keyboard", "Keyboard", "keyboard")]) }
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     switch page {
+                    case "keyboard": KeyboardPreferences()
                     case "shell":
                         PreferencesGroup(title: "Panels") {
                             SwitchRow(title: "Show Top Bar", isOn: Binding(get: { topBarOn }, set: { _ in actions.toggleTopBar() }))
@@ -355,11 +356,35 @@ struct PreferencesView: View {
         }
     }
 }
+struct KeyboardPreferences: View {
+    @ObservedObject private var store = ShortcutStore.shared
+    private var rectangle: Bool { NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.knollsoft.Rectangle" } }
+    var body: some View {
+        PreferencesGroup(title: "Super Key", footer: store.enabled && !store.listening ? "Mnome cannot listen to the keyboard. Allow it under System Settings → Privacy & Security → Accessibility." : "Tap it alone to open Activities. Other shortcuts with this key still reach your apps unless they are listed below.\(rectangle ? " Rectangle is running; its shortcuts keep working too." : "")") {
+            SwitchRow(title: "Use Shell Shortcuts", isOn: Binding(get: { store.enabled }, set: { store.setEnabled($0) }))
+            ForEach(SuperKey.allCases, id: \.self) { key in CheckRow(title: key.title, selected: store.superKey == key) { store.use(key) }.disabled(!store.enabled) }
+        }
+        if let message = store.message { Text(message).font(.callout).foregroundStyle(ThemePalette.accentText) }
+        ForEach(ShellAction.Group.allCases, id: \.self) { group in
+            PreferencesGroup(title: group.rawValue, footer: group == ShellAction.Group.allCases.last ? "Click a shortcut and press the new keys. Backspace turns it off, Esc leaves it as it was." : nil) {
+                ForEach(ShellAction.allCases.filter { $0.group == group }, id: \.self) { action in
+                    ActionRow(title: action.title, action: { store.record(action) }) {
+                        Keycap(text: store.recording == action ? "Press keys…" : store.table.chords[action]?.label ?? "Off")
+                    }.accessibilityValue(store.recording == action ? "Press the new keys" : store.table.chords[action]?.label ?? "Off")
+                }
+            }.disabled(!store.enabled || !store.listening)
+        }
+        BoxedList { ActionRow(title: "Reset All Shortcuts", icon: "arrow.uturn.backward", action: { store.reset() }) }
+        .onDisappear { store.stopRecording() }
+    }
+}
 struct ShortcutsView: View {
-    private let groups: [(String, [(String, String)])] = [
-        ("Shell", [("Find applications and windows", "Ctrl+F"), ("Refresh", "Ctrl+R"), ("Close current surface", "Ctrl+W"), ("Quit Mnome", "Ctrl+Q"), ("Preferences", "Ctrl+,"), ("Keyboard shortcuts", "Ctrl+?")]),
-        ("Navigation", [("Move focus", "Tab / Shift+Tab"), ("Navigate items", "Arrow keys"), ("Activate focused item", "Return"), ("Clear search, then close", "Escape"), ("Item actions", "Shift+F10")]),
-    ]
+    @ObservedObject private var store = ShortcutStore.shared
+    private var groups: [(String, [(String, String)])] {
+        [("Activities", [("Open or close Activities", store.superKey.title)])] + ShellAction.Group.allCases.map { group in (group.rawValue, ShellAction.allCases.filter { $0.group == group }.compactMap { action in store.table.chords[action].map { (action.title, $0.label) } }) }.filter { !$0.1.isEmpty } + [
+            ("Inside Mnome", [("Find applications and windows", "Ctrl+F"), ("Refresh", "Ctrl+R"), ("Close current surface", "Ctrl+W"), ("Quit Mnome", "Ctrl+Q"), ("Preferences", "Ctrl+,"), ("Keyboard shortcuts", "Ctrl+?")]),
+            ("Navigation", [("Move focus", "Tab / Shift+Tab"), ("Navigate items", "Arrow keys"), ("Activate focused item", "Return"), ("Clear search, then close", "Escape"), ("Item actions", "Shift+F10")])]
+    }
     var body: some View {
         VStack(spacing: 0) {
             HeaderBar(title: "Keyboard Shortcuts")
@@ -370,7 +395,7 @@ struct ShortcutsView: View {
                             ForEach(group.1, id: \.0) { row in ActionRow(title: row.0) { Keycap(text: row.1) } }
                         }
                     }
-                    Text("System-reserved shortcuts remain controlled by macOS. The global shell shortcut is configurable in Preferences.").font(.caption).foregroundStyle(.secondary)
+                    Text("Super is \(store.superKey.title). Change it and every shortcut in Preferences → Keyboard.").font(.caption).foregroundStyle(.secondary)
                 }.padding(24)
             }
         }

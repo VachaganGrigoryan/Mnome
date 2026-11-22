@@ -22,7 +22,7 @@ public enum WMEvent: Equatable, Sendable {
     case displays([WMDisplay], main: UInt64)
     case opened(id: UInt64, app: String, rect: WMRect, minimized: Bool, fullscreen: Bool), closed(UInt64), focused(UInt64), moved(UInt64, WMRect)
     case minimized(UInt64, Bool), fullscreen(UInt64, Bool), sticky(UInt64, Bool)
-    case activate(UInt64), minimize(UInt64), toggleMaximize(UInt64), restoreOrMinimize(UInt64), snap(UInt64, WMSnap), center(UInt64), resize(UInt64, dw: Int, dh: Int), toDisplay(UInt64, WMDirection)
+    case activate(UInt64), minimize(UInt64), toggleMaximize(UInt64), restore(UInt64), snap(UInt64, WMSnap), center(UInt64), resize(UInt64, dw: Int, dh: Int), toDisplay(UInt64, WMDirection)
     case setWorkspace(UInt64), stepWorkspace(Int), toWorkspace(UInt64, UInt64), showDesktop, cycle(backwards: Bool)
     public var json: [String: Any] {
         switch self {
@@ -37,7 +37,7 @@ public enum WMEvent: Equatable, Sendable {
         case let .activate(id): ["type": "activate", "id": id]
         case let .minimize(id): ["type": "minimize", "id": id]
         case let .toggleMaximize(id): ["type": "toggle_maximize", "id": id]
-        case let .restoreOrMinimize(id): ["type": "restore_or_minimize", "id": id]
+        case let .restore(id): ["type": "restore", "id": id]
         case let .snap(id, to): ["type": "snap", "id": id, "to": to.rawValue]
         case let .center(id): ["type": "center", "id": id]
         case let .resize(id, dw, dh): ["type": "resize", "id": id, "dw": dw, "dh": dh]

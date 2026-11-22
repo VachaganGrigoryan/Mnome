@@ -335,12 +335,41 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
     func applicationWillTerminate(_ notification: Notification) { windowManager.shutDown(); topBar.stop(); dock.stop(); macChrome.restoreAll(quitting: true) }
     /// Window control needs Accessibility. Asked for once; after that it starts as soon as it is granted.
     func startWindowManager() {
-        if AXIsProcessTrusted() { windowManager.start(); return }
+        if AXIsProcessTrusted() { windowManager.start(); startShortcuts(); return }
         if !UserDefaults.standard.bool(forKey: "askedForAccessibility") {
             UserDefaults.standard.set(true, forKey: "askedForAccessibility")
             AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.startWindowManager() }
+    }
+    func startShortcuts() {
+        let store = ShortcutStore.shared
+        store.superTapped = { [weak self] in guard let self else { return }; if panel?.isVisible == true { dismiss() } else { showActivities() } }
+        store.run = { [weak self] in self?.perform($0) }
+        store.start()
+    }
+    func perform(_ action: ShellAction) {
+        if let index = action.launchIndex { if dock.model.items.indices.contains(index) { dock.model.open(dock.model.items[index]) }; return }
+        switch action {
+        case .appGrid: if panel?.isVisible == true && !model.overview { dismiss() } else if panel?.isVisible == true { model.overview = false } else { model.overview = false; toggle() }
+        case .quickSettings: topBar.toggleQuickSettings()
+        case .lock: if !Private.lockScreen() { NSLog("Mnome: this macOS cannot lock the screen this way") }
+        case .tileLeft: windowManager.withFocused { .snap($0, .left) }
+        case .tileRight: windowManager.withFocused { .snap($0, .right) }
+        case .maximize: windowManager.withFocused { .snap($0, .maximize) }
+        case .restore: windowManager.withFocused { .restore($0) }
+        case .minimize: windowManager.withFocused { .minimize($0) }
+        case .center: windowManager.withFocused { .center($0) }
+        case .close: windowManager.registry.closeFocused()
+        case .showDesktop: if windowManager.running { windowManager.send(.showDesktop) }
+        case .cycle: if windowManager.running { windowManager.send(.cycle(backwards: false)) }
+        case .cycleBack: if windowManager.running { windowManager.send(.cycle(backwards: true)) }
+        case .moveLeft: windowManager.withFocused { .toDisplay($0, .left) }
+        case .moveRight: windowManager.withFocused { .toDisplay($0, .right) }
+        case .moveUp: windowManager.withFocused { .toDisplay($0, .up) }
+        case .moveDown: windowManager.withFocused { .toDisplay($0, .down) }
+        default: break
+        }
     }
     @objc func bringBackWindows() {
         Task {

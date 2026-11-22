@@ -77,12 +77,16 @@ import MnomeSupport
         guard tracked, let area = NSScreen.screens.first.map({ WMRect(WorkArea.flip($0.visibleFrame, primaryHeight: WindowManager.primaryHeight)).cgRect }) else { return }
         let start = frame(helper, "one")!
 
+        m.send(.activate(one)); _ = m.focus(one)
+        var front: UInt64?; for _ in 0..<40 { front = await m.registry.focusedWindow(); if front == one { break }; try? await Task.sleep(for: .milliseconds(50)) }
+        check("focuses one of several same-titled windows, and knows it is in front", front == one, "\(String(describing: front)) want \(one)")
+
         m.send(.snap(one, .left)); m.send(.snap(two, .right))
         let left = CGRect(x: area.minX, y: area.minY, width: (area.width / 2).rounded(.down), height: area.height)
         check("snaps to halves", await wait { near(frame(helper, "one"), left) && near(frame(helper, "two"), CGRect(x: left.maxX, y: area.minY, width: area.width - left.width, height: area.height)) }, "\(String(describing: frame(helper, "one"))) \(String(describing: frame(helper, "two"))) want \(left)")
         m.send(.toggleMaximize(one))
         check("maximizes", await wait { near(frame(helper, "one"), area) }, "\(String(describing: frame(helper, "one"))) want \(area)")
-        m.send(.restoreOrMinimize(one))
+        m.send(.restore(one))
         check("restores the free frame", await wait { near(frame(helper, "one"), start) }, "\(String(describing: frame(helper, "one"))) want \(start)")
         let fixedSize = frame(helper, "fixed")!.size
         m.send(.snap(fixed, .left))

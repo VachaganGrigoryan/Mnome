@@ -5,21 +5,6 @@ struct WindowReading { let ref: AXUIElement, number: CGWindowID?, frame: CGRect,
 struct TrackedWindow { let id: UInt64, pid: pid_t, app: String; var ref: AXUIElement, frame: CGRect, minimized: Bool, fullscreen: Bool }
 enum RegistryEvent { case opened(TrackedWindow), closed(UInt64), moved(UInt64, CGRect), minimized(UInt64, Bool), fullscreen(UInt64, Bool), focused(UInt64) }
 
-/// Runs the observers' run loop, so a slow main thread never delays them and they never delay it.
-private final class ObserverThread {
-    static let shared = ObserverThread()
-    private(set) var loop: CFRunLoop!
-    private init() {
-        let ready = DispatchSemaphore(value: 0)
-        let thread = Thread { [self] in
-            loop = CFRunLoopGetCurrent()
-            var context = CFRunLoopSourceContext(); CFRunLoopAddSource(loop, CFRunLoopSourceCreate(nil, 0, &context), .commonModes) // keeps the loop alive with no observers
-            ready.signal(); CFRunLoopRun()
-        }
-        thread.name = "dev.mnome.ax.observers"; thread.qualityOfService = .userInteractive; thread.start(); ready.wait()
-    }
-    func perform(_ work: @escaping () -> Void) { CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue, work); CFRunLoopWakeUp(loop) }
-}
 /// One app's observer.
 private final class Watcher: @unchecked Sendable {
     let pid: pid_t, deliver: (pid_t, String, AXUIElement) -> Void
@@ -31,6 +16,7 @@ private final class Watcher: @unchecked Sendable {
         exit = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .main) // macOS announces only some apps
         exit.setEventHandler(handler: exited); exit.activate()
     }
+    static let thread = RunLoopThread("dev.mnome.ax.observers")
     static let appNotifications = ["AXWindowCreated", "AXFocusedWindowChanged", "AXMainWindowChanged", "AXApplicationActivated"]
     static let windowNotifications = ["AXUIElementDestroyed", "AXWindowMoved", "AXWindowResized", "AXWindowMiniaturized", "AXWindowDeminiaturized"]
     /// On the app's queue. False when the app does not accept observers yet.
@@ -45,7 +31,7 @@ private final class Watcher: @unchecked Sendable {
         guard Self.appNotifications.filter({ let e = AXObserverAddNotification(made, app, $0 as CFString, me); return e == .success || e == .notificationAlreadyRegistered }).count > 1 else { return false }
         return lock.withLock {
             guard !stopped else { return false } // callbacks only ever arrive through a source, and none was added
-            observer = made; CFRunLoopAddSource(ObserverThread.shared.loop, AXObserverGetRunLoopSource(made), .commonModes)
+            observer = made; CFRunLoopAddSource(Watcher.thread.loop, AXObserverGetRunLoopSource(made), .commonModes)
             return true
         }
     }
@@ -54,7 +40,7 @@ private final class Watcher: @unchecked Sendable {
     func stop() {
         exit.cancel()
         let old = lock.withLock { stopped = true; defer { observer = nil }; return observer }
-        if let old { ObserverThread.shared.perform { withExtendedLifetime(self) { CFRunLoopRemoveSource(ObserverThread.shared.loop, AXObserverGetRunLoopSource(old), .commonModes) } } }
+        if let old { Watcher.thread.perform { withExtendedLifetime(self) { CFRunLoopRemoveSource(Watcher.thread.loop, AXObserverGetRunLoopSource(old), .commonModes) } } }
     }
 }
 
@@ -191,6 +177,23 @@ private final class Watcher: @unchecked Sendable {
         guard let window = windows.removeValue(forKey: id) else { return }
         order[window.pid]?.removeAll { $0 == id }; refreshes.removeValue(forKey: id)?.cancel()
         onEvent(.closed(id))
+    }
+    /// The window the person is working in, asked fresh: the last one reported may be behind a dialog or panel we do not track.
+    func focusedWindow() async -> UInt64? {
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier, watchers[pid] != nil else { return nil }
+        guard case let .success(value) = await client.run(pid, { try AXUIElementCreateApplication(pid).value("AXFocusedWindow") }), let value, CFGetTypeID(value) == AXUIElementGetTypeID(), isFront(pid) else { return nil }
+        return id(pid, value as! AXUIElement)
+    }
+    /// The person may have switched apps while we waited for an answer.
+    private func isFront(_ pid: pid_t) -> Bool { running && watchers[pid] != nil && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid }
+    /// Presses its close button, so the app can still ask to save.
+    func closeFocused() {
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier, watchers[pid] != nil else { return }
+        Task {
+            let found = await client.run(pid) { () -> CFTypeRef? in guard let window = try AXUIElementCreateApplication(pid).value("AXFocusedWindow"), CFGetTypeID(window) == AXUIElementGetTypeID() else { return nil }; return try (window as! AXUIElement).value("AXCloseButton") }
+            guard case let .success(button?) = found, CFGetTypeID(button) == AXUIElementGetTypeID(), isFront(pid) else { return }
+            _ = await client.run(pid) { try (button as! AXUIElement).perform("AXPress") }
+        }
     }
     private func readFocus(_ pid: pid_t) {
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return }

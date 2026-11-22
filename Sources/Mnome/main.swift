@@ -25,6 +25,7 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
     @Published var query = ""; @Published var apps: [AppItem] = []; @Published var windows: [WindowItem] = []
     @Published var overview = false; @Published var message = ""; @Published var selection = 0
     var close: ((_ reactivate: Bool) -> Void)?
+    var focusWindow: ((UInt32) -> Bool)?
     @Published var filtered: [AppItem] = []
     @Published var appState: PresentationState = .loading
     @Published var windowState: PresentationState = .empty
@@ -97,6 +98,7 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
     }
     func focus(_ item: WindowItem) {
         close?(false) // reactivating the previous app here would race the window being raised
+        if focusWindow?(item.id) == true { return } // known exactly; what follows guesses by title and frame
         DispatchQueue.global(qos: .userInitiated).async {
             guard let app = NSRunningApplication(processIdentifier: item.pid) else { return }
             let ax = AXUIElementCreateApplication(item.pid)
@@ -232,10 +234,10 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
     let topBar = TopBarController()
     let dock = DockController()
     let macChrome = MacChromeController()
+    let windowManager = WindowManager()
     let model = Model(); var panel: NSPanel?; var panels: [NSPanel] = []; var status: NSStatusItem!; var hotkey: EventHotKeyRef?; var previous: NSRunningApplication?
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory); model.shortcutTitle = UserDefaults.standard.string(forKey: "shortcutTitle") ?? "Control–Option–Space"; model.discover(); model.close = { [weak self] in self?.dismiss(reactivate: $0) }
-        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.5) // the system-wide element sets the timeout for every element in this process
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let url = Bundle.main.url(forResource: "Mnome", withExtension: "icns"), let appIcon = NSImage(contentsOf: url) {
             NSApp.applicationIconImage = appIcon
@@ -255,7 +257,7 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
         let dockVisibility = NSMenuItem(title: "Show Dock", action: #selector(toggleDock(_:)), keyEquivalent: "")
         dockVisibility.target = self; dockVisibility.state = dock.enabled ? .on : .off; menu.insertItem(dockVisibility, at: 1)
         let favoritesItem = NSMenuItem(title: "Favorites", action: nil, keyEquivalent: ""); favoritesItem.submenu = NSMenu(); menu.insertItem(favoritesItem, at: 1)
-        for (title, action) in [("Preferences…", #selector(showPreferences)), ("Keyboard Shortcuts", #selector(showKeyboardShortcuts)), ("About Mnome", #selector(showAbout)), ("Focus Dock", #selector(focusDock)), ("Focus Top Bar", #selector(focusTopBar)), ("Restore macOS Shell", #selector(restoreMacChrome))] { let item = NSMenuItem(title:title,action:action,keyEquivalent:""); item.target = self; menu.addItem(item) }
+        for (title, action) in [("Preferences…", #selector(showPreferences)), ("Keyboard Shortcuts", #selector(showKeyboardShortcuts)), ("About Mnome", #selector(showAbout)), ("Focus Dock", #selector(focusDock)), ("Focus Top Bar", #selector(focusTopBar)), ("Restore macOS Shell", #selector(restoreMacChrome)), ("Bring Back All Windows", #selector(bringBackWindows))] { let item = NSMenuItem(title:title,action:action,keyEquivalent:""); item.target = self; menu.addItem(item) }
         status.menu = menu
         dock.model.beforeOpen = { [weak self] in if self?.panel?.isVisible == true { self?.dismiss(reactivate: false) } }
         dock.changed = { [weak self] in self?.updateFavoritesMenu() }
@@ -264,7 +266,7 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
         updateFavoritesMenu()
         topBar.activities = { [weak self] in self?.showActivities() }
         topBar.model = model; topBar.dock = dock.model; topBar.macChrome = macChrome
-        macChrome.changed = { [weak self] in self?.topBar.rebuild(); self?.dock.rebuild() }
+        macChrome.changed = { [weak self] in self?.topBar.rebuild(); self?.dock.rebuild(); self?.windowManager.updateDisplays() }
         topBar.actions = QuickActions(
             openMnome: { [weak self] in self?.showActivities() }, preferences: { [weak self] in self?.showPreferences() }, shortcuts: { [weak self] in self?.showKeyboardShortcuts() },
             about: { [weak self] in self?.showAbout() }, quit: { [weak self] in self?.quit() }, systemSettings: { [weak self] in self?.openSettings("") },
@@ -272,9 +274,15 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
             focusDock: { [weak self] in self?.focusDock() }, focusTopBar: { [weak self] in self?.focusTopBar() },
             toggleTopBar: { [weak self] in self?.setTopBarVisible(!(self?.topBar.enabled ?? true)) }, toggleDock: { [weak self] in self?.setDockVisible(!(self?.dock.enabled ?? true)) },
             setShortcut: { [weak self] in self?.applyShortcut($0) }, removeFavorite: { [weak self] in self?.dock.model.remove($0) },
-            toggleMacChrome: { [weak self] in guard let self else { return }; self.macChrome.setAll(hidden: self.macChrome.hidden.isEmpty) })
+            toggleMacChrome: { [weak self] in guard let self else { return }; self.macChrome.setAll(hidden: self.macChrome.hidden.isEmpty) }, bringBackWindows: { [weak self] in self?.bringBackWindows() })
         ShellUtilities.shared.configure(actions: topBar.actions, model: model, dock: dock.model, macChrome: macChrome)
         topBar.start()
+        windowManager.reserved = { [weak self] screen in
+            guard let self else { return (nil, nil) }
+            return (topBar.enabled ? TopBarGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, safeTop: screen.safeAreaInsets.top) : nil, dock.enabled ? DockGeometry.frame(visible: screen.visibleFrame, count: dock.model.items.count + 1) : nil)
+        }
+        model.focusWindow = { [weak self] in self?.windowManager.focus(UInt64($0)) ?? false }
+        startWindowManager()
         var type = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         InstallEventHandler(GetApplicationEventTarget(), { _, event, pointer in
             var id = EventHotKeyID()
@@ -324,12 +332,30 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
         if result == noErr { UserDefaults.standard.set(choice.mask, forKey: "shortcutModifiers"); UserDefaults.standard.set(choice.title, forKey: "shortcutTitle"); model.shortcutTitle = choice.title }
         else { RegisterEventHotKey(UInt32(kVK_Space), UInt32(previous.mask), EventHotKeyID(signature: 0x4d4e4f4d, id: 1), GetApplicationEventTarget(), 0, &hotkey); let alert = NSAlert(); alert.messageText = "Shortcut unavailable"; alert.informativeText = "Choose another shortcut from Quick Settings."; alert.runModal() }
     }
-    func applicationWillTerminate(_ notification: Notification) { topBar.stop(); dock.stop(); macChrome.restoreAll(quitting: true) }
+    func applicationWillTerminate(_ notification: Notification) { windowManager.shutDown(); topBar.stop(); dock.stop(); macChrome.restoreAll(quitting: true) }
+    /// Window control needs Accessibility. Asked for once; after that it starts as soon as it is granted.
+    func startWindowManager() {
+        if AXIsProcessTrusted() { windowManager.start(); return }
+        if !UserDefaults.standard.bool(forKey: "askedForAccessibility") {
+            UserDefaults.standard.set(true, forKey: "askedForAccessibility")
+            AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.startWindowManager() }
+    }
+    @objc func bringBackWindows() {
+        Task {
+            let failed = AXIsProcessTrusted() ? await windowManager.bringBackAll() : -1
+            guard failed != 0 else { return }
+            let alert = NSAlert(); alert.messageText = failed < 0 ? "Mnome needs Accessibility" : "Some windows could not be brought back"
+            alert.informativeText = failed < 0 ? "Allow Mnome in System Settings → Privacy & Security → Accessibility, then try again." : "\(failed) did not answer. Try again when their apps respond."
+            alert.runModal()
+        }
+    }
     @objc func restoreMacChrome() { macChrome.restoreAll() }
     func validateMenuItem(_ item: NSMenuItem) -> Bool { item.action == #selector(restoreMacChrome) ? macChrome.needsRestore : true }
     @objc func toggleDock(_ sender: NSMenuItem) { setDockVisible(!dock.enabled) }
     func setDockVisible(_ visible: Bool) {
-        dock.setVisible(visible)
+        dock.setVisible(visible); windowManager.updateDisplays()
         status.menu?.items.first(where: { $0.action == #selector(toggleDock(_:)) })?.state = dock.enabled ? .on : .off
     }
     func updateFavoritesMenu() {
@@ -345,7 +371,7 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
     @objc func removeFavorite(_ sender: NSMenuItem) { if let id = sender.representedObject as? String { dock.model.remove(id) } }
     @objc func toggleTopBar(_ sender: NSMenuItem) { setTopBarVisible(!topBar.enabled) }
     func setTopBarVisible(_ visible: Bool) {
-        topBar.setVisible(visible)
+        topBar.setVisible(visible); windowManager.updateDisplays()
         status.menu?.items.first(where: { $0.action == #selector(toggleTopBar(_:)) })?.state = topBar.enabled ? .on : .off
     }
     func showActivities() {
@@ -399,6 +425,15 @@ MainActor.assumeIsolated {
     // Start it through `open`, so macOS checks Mnome itself rather than the terminal that launched it.
     print("Mnome permissions: accessibility \(AXIsProcessTrusted()) screen-recording \(CGPreflightScreenCaptureAccess())"); exit(0)
  }
+ if CommandLine.arguments.contains("--rescue") {
+    guard AXIsProcessTrusted() else { print("Mnome needs Accessibility to move windows."); exit(1) }
+    let journal = RecoveryJournal(url: WindowManager.defaultJournal)
+    guard journal.acquire() else { print("Mnome is running: use Bring Back All Windows in its menu."); exit(1) }
+    Task { let failed = await RecoveryRunner.restore(journal) + RecoveryRunner.centerStrays(); print(failed == 0 ? "All windows are on screen." : "\(failed) windows could not be brought back."); exit(failed == 0 ? 0 : 1) }
+    RunLoop.main.run()
+ }
+ if CommandLine.arguments.contains("--engine-windows") { EngineWindows.run() }
+ if CommandLine.arguments.contains("--engine-check") { EngineCheck.run() }
  let app = NSApplication.shared
  if let flag = CommandLine.arguments.firstIndex(of: "--gallery") {
     guard CommandLine.arguments.indices.contains(flag + 1) else { fatalError("Usage: Mnome --gallery DIR") }

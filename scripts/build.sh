@@ -5,6 +5,7 @@ export MACOSX_DEPLOYMENT_TARGET=15.0
 cargo build --manifest-path core/Cargo.toml --release --offline
 swift build -c release -Xlinker -L -Xlinker "$PWD/core/target/release" -Xlinker -lmnome_core
 mkdir -p build/Mnome.app/Contents/MacOS
+rm -f build/Mnome.app/Contents/MacOS/Mnome # a new file: overwriting the one a running Mnome uses would kill it
 cp .build/release/Mnome build/Mnome.app/Contents/MacOS/Mnome
 mkdir -p build/Mnome.app/Contents/Resources
 cp Sources/Mnome/Resources/Mnome.icns build/Mnome.app/Contents/Resources/Mnome.icns

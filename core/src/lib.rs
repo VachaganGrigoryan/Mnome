@@ -1,4 +1,7 @@
 //! Stateless search/layout engine. All platform objects remain in Swift.
+mod geometry;
+mod model;
+
 use std::collections::HashSet;
 
 use serde::Deserialize;
@@ -183,8 +186,37 @@ fn process(input: &[u8]) -> Result<Value, String> {
                 .unwrap_or(&origin.id);
             Ok(json!({"selected":selected}))
         }
+        Some("wm") => {
+            let mut wm = window_state(&value["state"])?;
+            let event: model::Event =
+                serde_json::from_value(value["event"].clone()).map_err(|e| e.to_string())?;
+            let ops = wm.reduce(event)?;
+            Ok(json!({"revision": wm.revision(), "state": wm, "ops": ops}))
+        }
+        Some("wm_hit") => {
+            let wm = window_state(&value["state"])?;
+            let coordinate = |key: &str| {
+                value[key]
+                    .as_i64()
+                    .and_then(|n| i32::try_from(n).ok())
+                    .ok_or_else(|| format!("{key} must be a 32-bit integer"))
+            };
+            let (snap, border) = wm.hit(coordinate("x")?, coordinate("y")?);
+            let border = border.map(|(key, border)| json!({"key": key, "border": border}));
+            Ok(json!({"snap": snap, "border": border}))
+        }
         _ => Err("unknown operation".into()),
     }
+}
+
+/// Null means a fresh start.
+fn window_state(value: &Value) -> Result<model::Wm, String> {
+    if value.is_null() {
+        return Ok(model::Wm::default());
+    }
+    let wm: model::Wm = serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+    wm.check()?;
+    Ok(wm)
 }
 
 #[repr(C)]
@@ -347,5 +379,43 @@ mod tests {
                 mnome_free(b);
             }
         }
+    }
+
+    #[test]
+    fn window_operations_round_trip_through_the_abi() {
+        let displays = json!({"type":"displays","main":7,"displays":[{"id":7,"frame":{"x":0,"y":0,"w":1280,"h":800},"work":{"x":0,"y":32,"w":1280,"h":768}}]});
+        let step = |state: &Value, event: Value| {
+            process(
+                json!({"version":1,"op":"wm","state":state,"event":event})
+                    .to_string()
+                    .as_bytes(),
+            )
+        };
+        let state = step(&Value::Null, displays).unwrap()["state"].clone();
+        let opened = json!({"type":"opened","id":4294967295u64,"app":"a","rect":{"x":10,"y":50,"w":300,"h":200},"minimized":false,"fullscreen":false});
+        let out = step(&state, opened).unwrap();
+        assert_eq!(out["ops"], json!([]));
+        assert_eq!(out["revision"], 2);
+        let out = step(
+            &out["state"],
+            json!({"type":"snap","id":4294967295u64,"to":"left"}),
+        )
+        .unwrap();
+        assert_eq!(
+            out["ops"],
+            json!([{"op":"place","window":4294967295u64,"rect":{"x":0,"y":32,"w":640,"h":768}},{"op":"focus","window":4294967295u64}])
+        );
+        let hit = process(
+            json!({"op":"wm_hit","state":out["state"],"x":640,"y":400})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(hit["border"]["border"], json!({"column":{"boundary":1}}));
+        assert!(step(&out["state"], json!({"type":"nonsense"})).is_err());
+        assert!(step(&out["state"], json!({"type":"closed","id":1,"extra":true})).is_err());
+        let mut old = out["state"].clone();
+        old["schema"] = json!(0);
+        assert!(step(&old, json!({"type":"show_desktop"})).is_err());
     }
 }

@@ -24,6 +24,14 @@ Only eligible onscreen windows are included. Hidden and minimized windows are ex
 
 Manual acceptance: launch and dismiss with the keyboard, search and open an app, select a window, deny each permission, close a window during capture, test duplicate titles, multiple displays, mixed scales and fullscreen/Stage Manager. macOS 15 compatibility needs a host running that version. Developer ID signing and notarization are not included.
 
+## Window engine
+
+With Accessibility granted, Mnome tracks every app's standard windows through Accessibility notifications, checks each fact by reading it back, and sweeps every 30 seconds as a backup. The Rust core decides where windows belong (`wm` operation, see `core/README.md`); Swift carries it out, retries, and never waits on an app. Windows on native full screen are left alone and Stage Manager is not supported.
+
+Windows of other workspaces are parked in a free bottom corner of the main display. Workspaces are not in the interface yet. Before a window is parked its frame is written to `~/Library/Application Support/Mnome/parked.json`, and the record is deleted only after the window has been read back in sight. Parked windows return when Mnome quits, at the next launch after a crash, through **Bring Back All Windows** (status menu and Preferences → Shell), or with `build/Mnome.app/Contents/MacOS/Mnome --rescue` while Mnome is not running. One copy of Mnome manages windows at a time.
+
+`.build/debug/Mnome --engine-check` drives the real engine against four windows of its own for about 40 seconds (snapping, parking, fast switching, a hung app, a crash, quitting) and exits with the number of failures. It moves no other window, but its windows take focus.
+
 ## Top bar
 
 Mnome displays a 32-point GNOME-inspired bar beneath the native menu/notch region on each display. Activities toggles the overview; the center shows local date/time, and the Quick Settings popover includes network and battery toggles, top bar/dock switches, shortcut and favorites sections, and System Settings links. Status does not guarantee internet connectivity.

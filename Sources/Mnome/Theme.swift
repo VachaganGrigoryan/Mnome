@@ -323,6 +323,9 @@ struct PreferencesView: View {
                             }
                             ActionRow(title: "Restore All macOS Settings", icon: "arrow.uturn.backward", action: { macChrome.restoreAll() }).disabled(!macChrome.needsRestore)
                         }
+                        PreferencesGroup(title: "Windows", footer: "Moves every window that is out of sight back onto the screen. Window management does not support Stage Manager yet.") {
+                            ActionRow(title: "Bring Back All Windows", icon: "macwindow.on.rectangle", action: { actions.bringBackWindows() })
+                        }
                         PreferencesGroup(title: "Overview Shortcut", footer: "System-reserved shortcuts remain controlled by macOS.") {
                             ForEach(ShortcutChoice.all, id: \.title) { choice in
                                 CheckRow(title: choice.title, selected: model.shortcutTitle == choice.title) { actions.setShortcut(choice) }

@@ -112,7 +112,7 @@ import MnomeSupport
         m.send(.setWorkspace(other))
         check("switching swaps what is shown", await wait { near(frame(helper, "one"), before) && (frame(helper, "two").map { Parking.isParked($0, displays: displays) } ?? false) }, "one \(String(describing: frame(helper, "one"))) two \(String(describing: frame(helper, "two")))")
         m.send(.setWorkspace(home))
-        check("and back, to the exact tile", await wait { frame(helper, "two")?.minX == left.maxX && (frame(helper, "one").map { Parking.isParked($0, displays: displays) } ?? false) })
+        check("and back, to the exact tile", await wait { frame(helper, "two")?.minX == left.maxX && (frame(helper, "one").map { Parking.isParked($0, displays: displays) } ?? false) }, "one \(String(describing: frame(helper, "one"))) two \(String(describing: frame(helper, "two"))) state \(m.state?.windows.map { "\($0.id) ws\($0.workspace) sticky \($0.sticky) \($0.rect)" } ?? []) current \(m.state?.current ?? 0) home \(home) other \(other) journal \(RecoveryJournal(url: journal).records.map(\.window))")
         for _ in 0..<4 { m.send(.setWorkspace(other)); m.send(.setWorkspace(home)) }
         check("fast switching settles on the last choice", await wait { frame(helper, "two")?.minX == left.maxX && (frame(helper, "one").map { Parking.isParked($0, displays: displays) } ?? false) }, "one \(String(describing: frame(helper, "one"))) two \(String(describing: frame(helper, "two")))")
         m.send(.toWorkspace(one, home))

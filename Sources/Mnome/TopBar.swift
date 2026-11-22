@@ -59,13 +59,14 @@ struct QuickActions {
     var openMnome: () -> Void = {}, preferences: () -> Void = {}, shortcuts: () -> Void = {}, about: () -> Void = {}, quit: () -> Void = {}
     var systemSettings: () -> Void = {}, networkSettings: () -> Void = {}, batterySettings: () -> Void = {}
     var focusDock: () -> Void = {}, focusTopBar: () -> Void = {}, toggleTopBar: () -> Void = {}, toggleDock: () -> Void = {}
-    var setShortcut: (ShortcutChoice) -> Void = { _ in }, removeFavorite: (String) -> Void = { _ in }
+    var setShortcut: (ShortcutChoice) -> Void = { _ in }, removeFavorite: (String) -> Void = { _ in }, toggleMacChrome: () -> Void = {}
 }
 
 struct TopBarView: View {
     @ObservedObject var status: BarStatus
     @ObservedObject var model: Model
     @ObservedObject var dock: DockModel
+    @ObservedObject var macChrome: MacChromeController
     let activities: () -> Void
     let actions: QuickActions
     @State private var showingMenu = false
@@ -85,7 +86,7 @@ struct TopBarView: View {
                     }.font(.callout).padding(.horizontal, 12).padding(.vertical, 3)
                 }.buttonStyle(ShellButtonStyle()).help(status.network).accessibilityLabel(statusLabel)
                 .popover(isPresented: $showingMenu, arrowEdge: .bottom) {
-                    QuickSettingsView(status: status, model: model, dock: dock, actions: actions, dismiss: { showingMenu = false }).shellTheme()
+                    QuickSettingsView(status: status, model: model, dock: dock, macChrome: macChrome, actions: actions, dismiss: { showingMenu = false }).shellTheme()
                 }
             }.padding(.horizontal, 8)
         }.foregroundStyle(.white).frame(height: 32).background(ShellPalette.panel).shellTheme()
@@ -96,6 +97,7 @@ struct QuickSettingsView: View {
     @ObservedObject var status: BarStatus
     @ObservedObject var model: Model
     @ObservedObject var dock: DockModel
+    @ObservedObject var macChrome: MacChromeController
     let actions: QuickActions
     let dismiss: () -> Void
     @AppStorage("showTopBar") private var topBarOn = true
@@ -144,6 +146,7 @@ struct QuickSettingsView: View {
                 toggle("menubar.rectangle", "Top Bar", topBarOn ? "On" : "Off", on: topBarOn, actions.toggleTopBar)
                 toggle("dock.rectangle", "Dock", dockOn ? "On" : "Off", on: dockOn, actions.toggleDock)
                 toggle("command", "Shortcut", model.shortcutTitle, expands: "shortcut") { section = section == "shortcut" ? nil : "shortcut" }
+                toggle("macwindow.badge.plus", "macOS Shell", macChrome.summary, on: !macChrome.hidden.isEmpty, actions.toggleMacChrome)
                 toggle("star", "Favorites", "\(dock.favorites.count) pinned", expands: "favorites") { section = section == "favorites" ? nil : "favorites" }
             }
             if section == "shortcut" {
@@ -179,6 +182,7 @@ final class TopBarPanel: NSPanel {
     var actions = QuickActions()
     var model: Model?
     var dock: DockModel?
+    var macChrome: MacChromeController?
     func start() {
         status.start(); rebuild()
         observer = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.rebuild() } }
@@ -186,13 +190,13 @@ final class TopBarPanel: NSPanel {
     func setVisible(_ visible: Bool) { UserDefaults.standard.set(visible, forKey: "showTopBar"); rebuild() }
     func rebuild() {
         panels.forEach { $0.close() }; panels = []
-        guard enabled, let model, let dock else { return }
+        guard enabled, let model, let dock, let macChrome else { return }
         for screen in NSScreen.screens {
             let frame = TopBarGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, safeTop: screen.safeAreaInsets.top)
             let panel = TopBarPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false; panel.level = .floating
             panel.collectionBehavior = [.canJoinAllSpaces, .stationary]; panel.isOpaque = true
-            panel.contentView = NSHostingView(rootView: TopBarView(status: status, model: model, dock: dock, activities: activities, actions: actions))
+            panel.contentView = NSHostingView(rootView: TopBarView(status: status, model: model, dock: dock, macChrome: macChrome, activities: activities, actions: actions))
             panel.orderFrontRegardless(); panels.append(panel)
         }
     }

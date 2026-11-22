@@ -11,3 +11,5 @@ Platform adaptations: native application icons and system fonts; macOS permissio
 ## Bundled symbolic asset
 
 `Sources/Mnome/Resources/open-menu-symbolic.svg` is from GNOME/adwaita-icon-theme (`Adwaita/symbolic/actions/open-menu-symbolic.svg`). The unmodified upstream `COPYING` is bundled as `Adwaita-COPYING`. Upstream offers LGPL v3 or CC BY-SA 3.0 US; preserve attribution and license when redistributing. The resource remains vector-based; no generated bitmap is used.
+
+Hiding macOS shell elements (Dock, menu bar, desktop, Stage Manager) is opt-in per element and always reversible: Restore All stays reachable from Preferences and the native status menu.

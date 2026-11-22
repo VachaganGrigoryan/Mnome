@@ -281,10 +281,11 @@ struct ViewSwitcher: View {
     private var actions = QuickActions()
     private var model: Model?
     private var dock: DockModel?
-    func configure(actions: QuickActions, model: Model, dock: DockModel) { self.actions = actions; self.model = model; self.dock = dock }
+    private var macChrome: MacChromeController?
+    func configure(actions: QuickActions, model: Model, dock: DockModel, macChrome: MacChromeController) { self.actions = actions; self.model = model; self.dock = dock; self.macChrome = macChrome }
     func showPreferences() {
-        guard let model, let dock else { return }
-        show("Preferences", size: NSSize(width: 560, height: 480), view: AnyView(PreferencesView(model: model, dock: dock, actions: actions)))
+        guard let model, let dock, let macChrome else { return }
+        show("Preferences", size: NSSize(width: 560, height: 600), view: AnyView(PreferencesView(model: model, dock: dock, macChrome: macChrome, actions: actions)))
     }
     func showShortcuts() { show("Keyboard Shortcuts", size: NSSize(width: 520, height: 640), view: AnyView(ShortcutsView())) }
     func showAbout() { show("About Mnome", size: NSSize(width: 360, height: 460), view: AnyView(AboutView())) }
@@ -300,6 +301,7 @@ struct PreferencesView: View {
     @ObservedObject var settings = AppearanceSettings.shared
     @ObservedObject var model: Model
     @ObservedObject var dock: DockModel
+    @ObservedObject var macChrome: MacChromeController
     let actions: QuickActions
     @AppStorage("showTopBar") private var topBarOn = true
     @AppStorage("showDock") private var dockOn = true
@@ -314,6 +316,12 @@ struct PreferencesView: View {
                         PreferencesGroup(title: "Panels") {
                             SwitchRow(title: "Show Top Bar", isOn: Binding(get: { topBarOn }, set: { _ in actions.toggleTopBar() }))
                             SwitchRow(title: "Show Dock", isOn: Binding(get: { dockOn }, set: { _ in actions.toggleDock() }))
+                        }
+                        PreferencesGroup(title: "macOS", footer: "Original settings are saved and restored automatically when Mnome quits. If Mnome ever quits unexpectedly, relaunch it and use Restore All.") {
+                            ForEach(MacElement.allCases, id: \.self) { element in
+                                SwitchRow(title: element.title, isOn: Binding(get: { macChrome.hidden.contains(element) }, set: { macChrome.set(element, hidden: $0) }))
+                            }
+                            ActionRow(title: "Restore All macOS Settings", icon: "arrow.uturn.backward", action: { macChrome.restoreAll() }).disabled(macChrome.hidden.isEmpty)
                         }
                         PreferencesGroup(title: "Overview Shortcut", footer: "System-reserved shortcuts remain controlled by macOS.") {
                             ForEach(ShortcutChoice.all, id: \.title) { choice in

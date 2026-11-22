@@ -36,3 +36,9 @@ The bottom dock displays favorites followed by other running user applications o
 Click to launch or activate; context menus offer normal Quit for running applications. Show Dock in Quick Settings or Preferences → Shell controls visibility independently of the overview. The dock overlays content without resizing other windows or modifying Apple's Dock preferences. Overflow scrolls horizontally.
 
 Manual acceptance: pin from launcher, reorder favorites, restart, launch/activate/quit, unavailable favorites, multiple processes, overflow, display reconnects and fullscreen coexistence. Interactive checks are required before claiming GUI behavior verified.
+
+## Testing Mnome as the shell
+
+Preferences → Shell → macOS (and the **macOS Shell** pill in Quick Settings) can hide Apple's Dock, menu bar, desktop icons and widgets, and Stage Manager / click-to-show-desktop, one element at a time. Mnome saves each original preference value before changing it and restores it exactly (including keys that were not set).
+
+Original settings come back automatically when Mnome quits normally. If Mnome quits unexpectedly, the saved originals stay on disk: relaunch Mnome and use **Restore macOS Shell** in the status menu, or Preferences → Shell → Restore All macOS Settings. Hiding the menu bar asks for Automation (System Events) permission the first time. The Dock, Finder and WindowManager restart briefly when toggled.

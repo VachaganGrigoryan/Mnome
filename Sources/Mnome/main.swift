@@ -231,6 +231,7 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
 @MainActor final class Delegate: NSObject, NSApplicationDelegate {
     let topBar = TopBarController()
     let dock = DockController()
+    let macChrome = MacChromeController()
     let model = Model(); var panel: NSPanel?; var panels: [NSPanel] = []; var status: NSStatusItem!; var hotkey: EventHotKeyRef?; var previous: NSRunningApplication?
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory); model.shortcutTitle = UserDefaults.standard.string(forKey: "shortcutTitle") ?? "Control–Option–Space"; model.discover(); model.close = { [weak self] in self?.dismiss() }
@@ -253,7 +254,7 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
         let dockVisibility = NSMenuItem(title: "Show Dock", action: #selector(toggleDock(_:)), keyEquivalent: "")
         dockVisibility.target = self; dockVisibility.state = dock.enabled ? .on : .off; menu.insertItem(dockVisibility, at: 1)
         let favoritesItem = NSMenuItem(title: "Favorites", action: nil, keyEquivalent: ""); favoritesItem.submenu = NSMenu(); menu.insertItem(favoritesItem, at: 1)
-        for (title, action) in [("Preferences…", #selector(showPreferences)), ("Keyboard Shortcuts", #selector(showKeyboardShortcuts)), ("About Mnome", #selector(showAbout)), ("Focus Dock", #selector(focusDock)), ("Focus Top Bar", #selector(focusTopBar))] { let item = NSMenuItem(title:title,action:action,keyEquivalent:""); item.target = self; menu.addItem(item) }
+        for (title, action) in [("Preferences…", #selector(showPreferences)), ("Keyboard Shortcuts", #selector(showKeyboardShortcuts)), ("About Mnome", #selector(showAbout)), ("Focus Dock", #selector(focusDock)), ("Focus Top Bar", #selector(focusTopBar)), ("Restore macOS Shell", #selector(restoreMacChrome))] { let item = NSMenuItem(title:title,action:action,keyEquivalent:""); item.target = self; menu.addItem(item) }
         status.menu = menu
         dock.model.beforeOpen = { [weak self] in if self?.panel?.isVisible == true { self?.dismiss() } }
         dock.changed = { [weak self] in self?.updateFavoritesMenu() }
@@ -261,15 +262,17 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
         dock.start()
         updateFavoritesMenu()
         topBar.activities = { [weak self] in self?.showActivities() }
-        topBar.model = model; topBar.dock = dock.model
+        topBar.model = model; topBar.dock = dock.model; topBar.macChrome = macChrome
+        macChrome.changed = { [weak self] in self?.topBar.rebuild(); self?.dock.rebuild() }
         topBar.actions = QuickActions(
             openMnome: { [weak self] in self?.showActivities() }, preferences: { [weak self] in self?.showPreferences() }, shortcuts: { [weak self] in self?.showKeyboardShortcuts() },
             about: { [weak self] in self?.showAbout() }, quit: { [weak self] in self?.quit() }, systemSettings: { [weak self] in self?.openSettings("") },
             networkSettings: { [weak self] in self?.openNetworkSettings() }, batterySettings: { [weak self] in self?.openBatterySettings() },
             focusDock: { [weak self] in self?.focusDock() }, focusTopBar: { [weak self] in self?.focusTopBar() },
             toggleTopBar: { [weak self] in self?.setTopBarVisible(!(self?.topBar.enabled ?? true)) }, toggleDock: { [weak self] in self?.setDockVisible(!(self?.dock.enabled ?? true)) },
-            setShortcut: { [weak self] in self?.applyShortcut($0) }, removeFavorite: { [weak self] in self?.dock.model.remove($0) })
-        ShellUtilities.shared.configure(actions: topBar.actions, model: model, dock: dock.model)
+            setShortcut: { [weak self] in self?.applyShortcut($0) }, removeFavorite: { [weak self] in self?.dock.model.remove($0) },
+            toggleMacChrome: { [weak self] in guard let self else { return }; self.macChrome.setAll(hidden: self.macChrome.hidden.isEmpty) })
+        ShellUtilities.shared.configure(actions: topBar.actions, model: model, dock: dock.model, macChrome: macChrome)
         topBar.start()
         var type = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         InstallEventHandler(GetApplicationEventTarget(), { _, _, pointer in
@@ -318,7 +321,9 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
         if result == noErr { UserDefaults.standard.set(choice.mask, forKey: "shortcutModifiers"); UserDefaults.standard.set(choice.title, forKey: "shortcutTitle"); model.shortcutTitle = choice.title }
         else { RegisterEventHotKey(UInt32(kVK_Space), UInt32(previous.mask), EventHotKeyID(signature: 0x4d4e4f4d, id: 1), GetApplicationEventTarget(), 0, &hotkey); let alert = NSAlert(); alert.messageText = "Shortcut unavailable"; alert.informativeText = "Choose another shortcut from Quick Settings."; alert.runModal() }
     }
-    func applicationWillTerminate(_ notification: Notification) { topBar.stop(); dock.stop() }
+    func applicationWillTerminate(_ notification: Notification) { topBar.stop(); dock.stop(); macChrome.restoreAll(wait: true) }
+    @objc func restoreMacChrome() { macChrome.restoreAll() }
+    func validateMenuItem(_ item: NSMenuItem) -> Bool { item.action == #selector(restoreMacChrome) ? !macChrome.hidden.isEmpty : true }
     @objc func toggleDock(_ sender: NSMenuItem) { setDockVisible(!dock.enabled) }
     func setDockVisible(_ visible: Bool) {
         dock.setVisible(visible)
@@ -380,6 +385,11 @@ MainActor.assumeIsolated {
     let navigation = core(["version":1,"op":"navigate","cards":[["id":"a","x":0,"y":0,"width":100,"height":100],["id":"b","x":120,"y":0,"width":100,"height":100]],"selected":"a","direction":"right"])
     guard navigation["selected"] as? String == "b" else { fatalError("Navigation bridge failed") }
     if case .success = coreResult(["op":"unsupported"]) { fatalError("Bridge must expose errors") }
+    let prefs = CFPreferencesStore(); let domain = "dev.mnome.selftest"
+    prefs.set(domain, "b", .bool(true)); prefs.set(domain, "i", .int(7)); prefs.set(domain, "d", .double(1000)); prefs.set(domain, "s", .string("x"))
+    guard prefs.get(domain, "b") == .bool(true), prefs.get(domain, "i") == .int(7), prefs.get(domain, "d") == .double(1000), prefs.get(domain, "s") == .string("x") else { fatalError("Preference store round trip failed") }
+    for key in ["b", "i", "d", "s"] { prefs.set(domain, key, .absent) }
+    guard prefs.get(domain, "b") == .absent else { fatalError("Preference store must delete absent keys") }
     print("Mnome bridge self-test passed"); exit(0)
  }
  let app = NSApplication.shared

@@ -24,6 +24,7 @@ cat > build/Mnome.app/Contents/Info.plist <<'PLIST'
 <key>CFBundleVersion</key><string>1</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSAppleEventsUsageDescription</key><string>Mnome hides and restores the macOS menu bar.</string>
 </dict></plist>
 PLIST
 codesign --force --sign - build/Mnome.app

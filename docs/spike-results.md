@@ -1,6 +1,6 @@
 # Phase 1 spike results
 
-macOS 27.0.1 (26A434), 22 November 2026. Built-in display 1512×982 pt (notch, safe top 32) with a 1920×1080 display to its right, bottom edges aligned. Throwaway code, not in the repository. Every test used windows created for it; no other app's windows and no system setting were changed.
+macOS 27.0.1 (26A434), 22 November 2026. Built-in display 1512×982 pt (notch, safe top 32) with a 1920×1080 display to its right, bottom edges aligned. The throwaway code became `./scripts/live-tests.sh 1`. Every test used windows created for it; no other app's windows and no system setting were changed.
 
 ## Answered
 
@@ -34,10 +34,10 @@ macOS 27.0.1 (26A434), 22 November 2026. Built-in display 1512×982 pt (notch, s
 
 ## Still open
 
-1. Parking apps with several windows, terminals and Electron editors.
+1. ~~Parking apps with several windows, terminals and Electron editors.~~ TextEdit (two windows), Terminal and VS Code park to 1×32 pt and return exactly (`./scripts/live-tests.sh apps`).
 2. Setting Bluetooth and Wi-Fi.
-3. Display unplug, sleep and wake while windows are parked; journal entries whose app restarted.
+3. Display unplug, sleep and wake while windows are parked. ~~Journal entries whose app restarted~~ (`./scripts/live-tests.sh 2`).
 
 ## Decision
 
-Parking, matching, capture, crash recovery, the key tap and the top bar all hold on 27.0.1. Phases 2 to 5 go as planned, with the bar at level 24. Workspaces stay off by default until open items 1 and 3 pass.
+Parking, matching, capture, crash recovery, the key tap and the top bar all hold on 27.0.1. Phases 2 to 5 go as planned, with the bar at level 24. Workspaces stay off by default until open item 3 passes.

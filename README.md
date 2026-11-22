@@ -21,6 +21,7 @@ Only eligible onscreen windows are included. Hidden and minimized windows are ex
 - `./scripts/build.sh`, then `build/Mnome.app/Contents/MacOS/Mnome --self-test`
 - `build/Mnome.app/Contents/MacOS/Mnome --gallery DIR` renders the shell surfaces to PNG without opening windows
 - `open -n -W --stdout FILE build/Mnome.app --args --permissions` writes Mnome's own permissions to FILE
+- `./scripts/live-tests.sh` drives the real macOS for about 4 minutes, keyboard and mouse included, and quits and reopens Mnome as needed. Run it after a macOS update or a change to windows, keys or the bar. Pass names to run some: `1` what macOS allows (parking, capture, the key tap, the bar's place, system controls), `2` the window engine, `apps` the engine on fresh copies of TextEdit, Terminal and VS Code, `3` keys and snapping in the running app. It moves only windows of its own, except that `3` minimizes every window for a moment and checks each returns exactly. `1` switches dark style, Night Light and the menu bar briefly and puts them back, also after being interrupted; `.build/debug/Mnome --system-check rescue` does so by hand. A `skip` line was not tested. The terminal needs Accessibility, and Screen Recording for captures.
 
 Manual acceptance: launch and dismiss with the keyboard, search and open an app, select a window, deny each permission, close a window during capture, test duplicate titles, multiple displays, mixed scales and fullscreen/Stage Manager. macOS 15 compatibility needs a host running that version. Developer ID signing and notarization are not included.
 
@@ -30,7 +31,7 @@ With Accessibility granted, Mnome tracks every app's standard windows through Ac
 
 Windows of other workspaces are parked in a free bottom corner of the main display. Workspaces are not in the interface yet. Before a window is parked its frame is written to `~/Library/Application Support/Mnome/parked.json`, and the record is deleted only after the window has been read back in sight. Parked windows return when Mnome quits, at the next launch after a crash, through **Bring Back All Windows** (status menu and Preferences → Shell), or with `build/Mnome.app/Contents/MacOS/Mnome --rescue` while Mnome is not running. One copy of Mnome manages windows at a time.
 
-`.build/debug/Mnome --engine-check` drives the real engine against four windows of its own for about 40 seconds (snapping, parking, fast switching, a hung app, a crash, quitting) and exits with the number of failures. It moves no other window, but its windows take focus.
+The engine is tested live (Validation, above).
 
 ## Keyboard
 

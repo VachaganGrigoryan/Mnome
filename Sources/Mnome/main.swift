@@ -456,13 +456,23 @@ MainActor.assumeIsolated {
  }
  if CommandLine.arguments.contains("--rescue") {
     guard AXIsProcessTrusted() else { print("Mnome needs Accessibility to move windows."); exit(1) }
-    let journal = RecoveryJournal(url: WindowManager.defaultJournal)
+    let given = CommandLine.arguments.firstIndex(of: "--rescue").flatMap { CommandLine.arguments.indices.contains($0 + 1) ? URL(fileURLWithPath: CommandLine.arguments[$0 + 1]) : nil } // a check's own file: only its windows
+    let journal = RecoveryJournal(url: given ?? WindowManager.defaultJournal)
     guard journal.acquire() else { print("Mnome is running: use Bring Back All Windows in its menu."); exit(1) }
-    Task { let failed = await RecoveryRunner.restore(journal) + RecoveryRunner.centerStrays(); print(failed == 0 ? "All windows are on screen." : "\(failed) windows could not be brought back."); exit(failed == 0 ? 0 : 1) }
+    Task { let failed = await RecoveryRunner.restore(journal) + (given == nil ? RecoveryRunner.centerStrays() : 0); print(failed == 0 ? "All windows are on screen." : "\(failed) windows could not be brought back."); exit(failed == 0 ? 0 : 1) }
     RunLoop.main.run()
  }
  if CommandLine.arguments.contains("--engine-windows") { EngineWindows.run() }
+ if CommandLine.arguments.contains("--quit") { // the ordinary way, so it puts everything back
+    let mine = { NSRunningApplication.runningApplications(withBundleIdentifier: "dev.mnome.shell").filter { $0.processIdentifier != getpid() } }
+    mine().forEach { _ = $0.terminate() }
+    for _ in 0..<100 { if mine().isEmpty { exit(0) }; RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
+    print("Mnome did not quit."); exit(1)
+ }
+ if CommandLine.arguments.contains("--key-window") { KeyWindow.run() }
+ if CommandLine.arguments.contains("--system-check") { SystemCheck.run() }
  if CommandLine.arguments.contains("--engine-check") { EngineCheck.run() }
+ if CommandLine.arguments.contains("--key-check") { KeyCheck.run() }
  let app = NSApplication.shared
  if let flag = CommandLine.arguments.firstIndex(of: "--gallery") {
     guard CommandLine.arguments.indices.contains(flag + 1) else { fatalError("Usage: Mnome --gallery DIR") }

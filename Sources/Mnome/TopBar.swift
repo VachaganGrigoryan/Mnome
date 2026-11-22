@@ -174,12 +174,16 @@ struct QuickSettingsView: View {
     }
 }
 final class TopBarPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
+    /// Only while asked for: when the overview closes, macOS gives the keyboard to any of our windows that would take it, and typing would go nowhere.
+    private var wantsKeyboard = false
+    func takeKeyboard() { wantsKeyboard = true; NSApp.activate(); makeKeyAndOrderFront(nil) }
+    override func resignKey() { super.resignKey(); wantsKeyboard = false }
+    override var canBecomeKey: Bool { wantsKeyboard }
     override var canBecomeMain: Bool { false }
 }
 @MainActor final class TopBarController {
     let status = BarStatus()
-    private var panels: [NSPanel] = []
+    private var panels: [TopBarPanel] = []
     private var observer: NSObjectProtocol?
     var enabled: Bool { UserDefaults.standard.object(forKey: "showTopBar") as? Bool ?? true }
     var activities: () -> Void = {}
@@ -204,7 +208,7 @@ final class TopBarPanel: NSPanel {
             panel.orderFrontRegardless(); panels.append(panel)
         }
     }
-    func focus() { NSApp.activate(); panels.first?.makeKeyAndOrderFront(nil) }
+    func focus() { panels.first?.takeKeyboard() }
     /// On the display under the pointer.
     func toggleQuickSettings() { guard enabled, let screen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main else { return }; status.menuRequest = (UUID(), WindowManager.displayID(screen)) }
     func stop() {

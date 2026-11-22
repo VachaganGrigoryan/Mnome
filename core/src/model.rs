@@ -822,8 +822,10 @@ impl Wm {
             w.restore
         };
         let shift = |v: i32, a: i32, alen: i32, b: i32, blen: i32| {
-            let moved = (i64::from(v) - i64::from(a)) * i64::from(blen) / i64::from(alen.max(1));
-            i32::try_from(i64::from(b) + moved).unwrap_or(b)
+            let from = i64::from(alen.max(1));
+            let moved = (i64::from(v) - i64::from(a)) * i64::from(blen);
+            // To the nearest point, so there and back ends where it began.
+            i32::try_from(i64::from(b) + (moved + from / 2).div_euclid(from)).unwrap_or(b)
         };
         let rect = Rect {
             x: shift(

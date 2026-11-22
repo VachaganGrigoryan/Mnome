@@ -447,6 +447,19 @@ fn moving_between_displays_keeps_size_position_and_maximized() {
 }
 
 #[test]
+fn moving_to_another_display_and_back_ends_where_it_began() {
+    for x in (0..800).step_by(7) {
+        let mut w = wm();
+        let rect = Rect::new(x, 32 + x / 4, 400, 300);
+        open_at(&mut w, 1, rect);
+        for direction in [Direction::Right, Direction::Left] {
+            go(&mut w, Event::ToDisplay { id: 1, direction });
+        }
+        assert_eq!(get(&w, 1).rect, rect);
+    }
+}
+
+#[test]
 fn unplugging_a_display_rehomes_its_windows() {
     let mut w = wm();
     open(&mut w, 1);

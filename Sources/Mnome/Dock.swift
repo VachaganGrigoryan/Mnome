@@ -128,7 +128,7 @@ struct DockView: View {
     let model = DockModel()
     var changed: (() -> Void)?
     var enabled: Bool { UserDefaults.standard.object(forKey: "showDock") as? Bool ?? true }
-    private var panels: [NSPanel] = []
+    private var panels: [TopBarPanel] = []
     private var displayIDs: [String] = []
     private var observer: NSObjectProtocol?
     func start() {
@@ -149,7 +149,7 @@ struct DockView: View {
             panel.contentView = NSHostingView(rootView: DockView(model: model)); panel.orderFrontRegardless(); panels.append(panel)
         }
     }
-    func focus() { NSApp.activate(); panels.first?.makeKeyAndOrderFront(nil) }
+    func focus() { panels.first?.takeKeyboard() }
     func stop() { if let observer { NotificationCenter.default.removeObserver(observer) }; observer = nil; model.stop(); panels.forEach { $0.close() }; panels = [] }
 }
 

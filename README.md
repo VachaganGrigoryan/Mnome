@@ -20,6 +20,7 @@ Only eligible onscreen windows are included. Hidden and minimized windows are ex
 - `cargo build --release --manifest-path core/Cargo.toml --offline`, then `swift test` (it links the release core)
 - `./scripts/build.sh`, then `build/Mnome.app/Contents/MacOS/Mnome --self-test`
 - `build/Mnome.app/Contents/MacOS/Mnome --gallery DIR` renders the shell surfaces to PNG without opening windows
+- `open -n -W --stdout FILE build/Mnome.app --args --permissions` writes Mnome's own permissions to FILE
 
 Manual acceptance: launch and dismiss with the keyboard, search and open an app, select a window, deny each permission, close a window during capture, test duplicate titles, multiple displays, mixed scales and fullscreen/Stage Manager. macOS 15 compatibility needs a host running that version. Developer ID signing and notarization are not included.
 

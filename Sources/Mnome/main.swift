@@ -395,6 +395,10 @@ MainActor.assumeIsolated {
     guard prefs.get(domain, "b") == .absent else { fatalError("Preference store must delete absent keys") }
     print("Mnome bridge self-test passed"); exit(0)
  }
+ if CommandLine.arguments.contains("--permissions") {
+    // Start it through `open`, so macOS checks Mnome itself rather than the terminal that launched it.
+    print("Mnome permissions: accessibility \(AXIsProcessTrusted()) screen-recording \(CGPreflightScreenCaptureAccess())"); exit(0)
+ }
  let app = NSApplication.shared
  if let flag = CommandLine.arguments.firstIndex(of: "--gallery") {
     guard CommandLine.arguments.indices.contains(flag + 1) else { fatalError("Usage: Mnome --gallery DIR") }

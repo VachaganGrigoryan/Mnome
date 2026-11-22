@@ -100,6 +100,16 @@ final class IntentLedgerTests: XCTestCase {
         ledger.intend(1, .shown(frame), revision: 2)
         XCTAssertEqual(ledger.finished(1, revision: 2, ok: true, observed: frame), .done)
     }
+    func testLateFocusDoesNotBringBackWhatWeJustPutAway() {
+        for target in [IntentLedger.Target.parked, .minimized] {
+            var ledger = IntentLedger(); XCTAssertFalse(ledger.isPuttingAway(1, now: now))
+            ledger.intend(1, target, revision: 1); XCTAssertTrue(ledger.isPuttingAway(1, now: now)) // on its way out
+            _ = ledger.finished(1, revision: 1, ok: true, observed: nil, now: now)
+            XCTAssertTrue(ledger.isPuttingAway(1, now: now.addingTimeInterval(0.4)))
+            XCTAssertFalse(ledger.isPuttingAway(1, now: now.addingTimeInterval(0.6))) // the person chose it, in the Dock or with Cmd+Tab
+            ledger.intend(1, .shown(frame), revision: 2); XCTAssertFalse(ledger.isPuttingAway(1, now: now))
+        }
+    }
     func testOwnMovesAreEchoesAndThePersonsAreNot() {
         var ledger = IntentLedger(); let other = frame.offsetBy(dx: 50, dy: 0)
         XCTAssertFalse(ledger.isEcho(1, frame: frame, now: now))

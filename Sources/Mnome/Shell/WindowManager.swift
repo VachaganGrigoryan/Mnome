@@ -84,7 +84,7 @@ import MnomeSupport
         case let .moved(id, frame): moved(id, frame)
         case let .minimized(id, on): send(.minimized(id, on))
         case let .fullscreen(id, on): send(.fullscreen(id, on))
-        case let .focused(id): send(.focused(id))
+        case let .focused(id): if !ledger.isPuttingAway(id) { send(.focused(id)) }
         }
     }
 

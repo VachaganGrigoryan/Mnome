@@ -28,6 +28,11 @@ public struct IntentLedger {
         if entry.pending || now < entry.quietUntil { return true }
         return entry.settled.map { Self.close($0, frame) } ?? false
     }
+    /// We have just put it away, so a report that it has focus is old news and must not bring it back.
+    public func isPuttingAway(_ id: UInt64, now: Date = Date()) -> Bool {
+        guard let entry = entries[id], entry.pending || now < entry.quietUntil else { return false }
+        return entry.target == .parked || entry.target == .minimized
+    }
     public static func close(_ a: CGRect, _ b: CGRect, by tolerance: CGFloat = 1) -> Bool {
         abs(a.minX - b.minX) <= tolerance && abs(a.minY - b.minY) <= tolerance && abs(a.width - b.width) <= tolerance && abs(a.height - b.height) <= tolerance
     }

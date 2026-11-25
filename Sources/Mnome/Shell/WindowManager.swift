@@ -18,6 +18,9 @@ import MnomeSupport
     private(set) var displays: [WMDisplay] = []
     /// A move the person makes with the mouse, before the core hears of it. True when it was taken care of.
     var userMoved: (UInt64, CGRect) -> Bool = { _, _ in false }
+    /// While the overview shows the Mac Dock, the space it takes is not taken from the windows: nothing moves under it.
+    var holdDisplays = false { didSet { if !holdDisplays, heldChange { heldChange = false; displaysChanged() } } }
+    private var heldChange = false
     /// Off in Preferences. Also off while Stage Manager is on or no display corner is free.
     var workspacesWanted = UserDefaults.standard.object(forKey: "workspaces") as? Bool ?? true { didSet { UserDefaults.standard.set(workspacesWanted, forKey: "workspaces"); updateDisplays() } }
     /// For the engine check: displays that are not there, to try other arrangements.
@@ -57,6 +60,7 @@ import MnomeSupport
     /// macOS rearranges in several steps and moves windows as it goes: wait until it has finished, and take none of it for the person's.
     func displaysChanged() {
         guard running else { return }
+        guard !holdDisplays else { heldChange = true; return }
         registry.away.leave("displays"); displayWait?.cancel()
         displayWait = Task { try? await Task.sleep(for: .milliseconds(700)); guard !Task.isCancelled else { return }; updateDisplays(); registry.away.comeBack("displays") }
     }

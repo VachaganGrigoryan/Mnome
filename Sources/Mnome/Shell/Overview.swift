@@ -24,6 +24,8 @@ final class ChromeHostingView<Content: View>: NSHostingView<Content> {
     @Published var apps = false
     @Published var selected: Int?
     @Published var page = 0
+    /// The Mac's own Dock takes the dash's place.
+    @Published var macDock = false
     /// The folder whose dialog is open in the app grid.
     @Published var folder: String?
 }
@@ -39,6 +41,9 @@ extension Animation {
     private(set) var snapshot = OverviewSnapshot()
     private var selectedWindow: UInt64?, leaving: Task<Void, Never>?
     var model: Model!, windowManager: WindowManager!, dock: DockModel!, topBar: TopBarController!
+    /// True while the Mac's own Dock is in use instead of Mnome's: the overview shows it in the dash's place.
+    var usesMacDock: () -> Bool = { false }
+    private var revealedDock = false, activations: NSObjectProtocol?
     private var main: OverviewGeometry? { stages.first?.geometry }
 
     func toggle(apps: Bool) {
@@ -46,7 +51,8 @@ extension Animation {
     }
     /// `following`: three fingers drive it from closed to open, through `follow`.
     func open(apps: Bool, following: Bool = false) {
-        leaving?.cancel(); panels.forEach { $0.orderOut(nil) }; panels = []; stages = []; watches = []
+        leaving?.cancel(); leaving = nil; panels.forEach { $0.orderOut(nil) }; panels = []; stages = []; watches = []
+        let macDock = usesMacDock(); stage.macDock = macDock; revealDock(macDock)
         isOpen = true; stage.apps = apps; stage.selected = nil; stage.page = 0; stage.folder = nil; selectedWindow = nil; model.query = ""
         snapshot = makeSnapshot(); wallpapers.load()
         let shown = snapshot.windows.filter { windowManager.state?.isShown($0.id) ?? false }.map(\.id)
@@ -56,7 +62,7 @@ extension Animation {
             let geometry = OverviewGeometry(id: WindowManager.displayID(screen), size: screen.frame.size, origin: CGPoint(x: screen.frame.minX, y: mainHeight - screen.frame.maxY),
                                             bar: topBar.enabled ? topBar.frame(on: screen).height : screen.safeAreaInsets.top, main: index == 0)
             let panel = OverviewPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-            panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false; panel.level = NSWindow.Level(rawValue: 20); panel.becomesKeyOnlyIfNeeded = false
+            panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false; panel.level = NSWindow.Level(rawValue: macDock ? 18 : 20); // under the Mac Dock (20) when it is the dash panel.becomesKeyOnlyIfNeeded = false
             panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false; panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
             panel.escape = { [weak self] in self?.escape() }
             let container = NSView(frame: CGRect(origin: .zero, size: screen.frame.size))
@@ -89,6 +95,7 @@ extension Animation {
     func close(then: (() -> Void)? = nil) {
         guard isOpen else { then?(); return }
         isOpen = false; leaving?.cancel(); watches = []; then?()
+        revealDock(false)
         let closing = panels, views = stages
         if let view = views.first { FrameMeter.shared.begin("close", on: view) }
         fadeChrome(to: 0)
@@ -100,6 +107,24 @@ extension Animation {
             self.panels = []; self.stages = []; self.chromeView = nil; self.stage.shown = false; self.topBar.status.inOverview = false; self.model.query = ""
         } }
     }
+    /// The Mac Dock up for as long as the overview is, auto-hide or not; launching an app from it closes the overview,
+    /// as GNOME's dash does. Auto-hide comes back on close, and at the next launch after a crash.
+    private func revealDock(_ on: Bool) {
+        if on, !revealedDock, Private.dockAutoHide == true {
+            windowManager.holdDisplays = true; UserDefaults.standard.set(true, forKey: "dockAutoHideHeld")
+            Private.setDockAutoHide(false); revealedDock = true
+        } else if !on, revealedDock {
+            Private.setDockAutoHide(true); UserDefaults.standard.removeObject(forKey: "dockAutoHideHeld"); revealedDock = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in if self?.revealedDock == false { self?.windowManager.holdDisplays = false } } // after the Dock has gone again
+        }
+        if on, activations == nil {
+            activations = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+                let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                MainActor.assumeIsolated { guard let self, self.isOpen, self.leaving == nil, app?.processIdentifier != getpid(), app?.bundleIdentifier != MacDockTile.bundle else { return }; self.close() }
+            }
+        } else if !on, let observer = activations { NSWorkspace.shared.notificationCenter.removeObserver(observer); activations = nil }
+    }
+    static func restoreDockAfterCrash() { if UserDefaults.standard.bool(forKey: "dockAutoHideHeld") { Private.setDockAutoHide(true); UserDefaults.standard.removeObject(forKey: "dockAutoHideHeld") } }
     /// SwiftUI's own focus request is lost when the panel becomes key after it; the field itself takes the keyboard.
     private static func focusField(in panel: NSPanel) {
         func find(_ view: NSView) -> NSTextField? { (view as? NSTextField).flatMap { $0.isEditable ? $0 : nil } ?? view.subviews.lazy.compactMap(find).first }
@@ -207,7 +232,7 @@ extension Animation {
     func chooseSelected() { if let selectedWindow { choose(selectedWindow) } }
     /// Where the chrome takes clicks: the search entry and dash always; results or the app grid when shown.
     private func chromeTakes(_ point: CGPoint, _ g: OverviewGeometry) -> Bool {
-        if g.searchRect.insetBy(dx: -8, dy: -8).contains(point) || point.y >= g.dashTop - 8 { return true }
+        if g.searchRect.insetBy(dx: -8, dy: -8).contains(point) || (!stage.macDock && point.y >= g.dashTop - 8) { return true }
         if !model.query.isEmpty { return g.resultsArea.contains(point) }
         return stage.apps && g.gridArea.contains(point)
     }
@@ -300,7 +325,7 @@ struct OverviewChrome: View {
             if !model.query.isEmpty { results }
             else if stage.apps { AppGridView(model: model, stage: stage, grid: grid, launch: controller.launch, escape: controller.escape) }
             searchEntry
-            DockView(model: dock).fixedSize().position(x: geometry.size.width / 2, y: geometry.dashTop + geometry.dashHeight / 2)
+            if !stage.macDock { DockView(model: dock).fixedSize().position(x: geometry.size.width / 2, y: geometry.dashTop + geometry.dashHeight / 2) }
         }
         .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
         .environment(\.colorScheme, .dark).foregroundStyle(.white)

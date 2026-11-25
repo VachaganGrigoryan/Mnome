@@ -115,6 +115,7 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
         dock.model.beforeOpen = { [weak self] in self?.overview.close() }
         dock.changed = { [weak self] in self?.updateFavoritesMenu() }
         dock.model.showApps = { [weak self] in self?.overview.toggle(apps: true) }
+        OverviewController.restoreDockAfterCrash(); overview.usesMacDock = { [weak self] in self.map { !$0.macChrome.hidden.contains(.dock) } ?? false }
         overview.model = model; overview.windowManager = windowManager; overview.dock = dock.model; overview.topBar = topBar; overview.wallpapers.load()
         dock.start()
         updateFavoritesMenu()
@@ -175,8 +176,10 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
             // AppKit/SwiftUI route Return, arrows, Tab and Escape to the focused control/container.
             return event
         }
+        // A display that comes, goes or changes size: not the Dock appearing, which only changes the visible area.
+        var frames = NSScreen.screens.map(\.frame)
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.overview.close() }
+            Task { @MainActor in let now = NSScreen.screens.map(\.frame); if now != frames { frames = now; self?.overview.close() } }
         }
     }
     @objc func showPreferences() { ShellUtilities.shared.showPreferences() }
@@ -362,7 +365,7 @@ MainActor.assumeIsolated {
  }
  if CommandLine.arguments.contains("--rescue") {
     guard AXIsProcessTrusted() else { print("Mnome needs Accessibility to move windows."); exit(1) }
-    if NSRunningApplication.runningApplications(withBundleIdentifier: "dev.mnome.shell").allSatisfy({ $0.processIdentifier == getpid() }) { MacChromeController().restoreAll(quitting: true) } // a crash leaves the menu bar and Dock hidden
+    if NSRunningApplication.runningApplications(withBundleIdentifier: "dev.mnome.shell").allSatisfy({ $0.processIdentifier == getpid() }) { MacChromeController().restoreAll(quitting: true); OverviewController.restoreDockAfterCrash() } // a crash leaves the menu bar and Dock hidden
     let given = CommandLine.arguments.firstIndex(of: "--rescue").flatMap { CommandLine.arguments.indices.contains($0 + 1) ? URL(fileURLWithPath: CommandLine.arguments[$0 + 1]) : nil } // a check's own file: only its windows
     let journal = RecoveryJournal(url: given ?? WindowManager.defaultJournal)
     guard journal.acquire() else { print("Mnome is running: use Bring Back All Windows in its menu."); exit(1) }

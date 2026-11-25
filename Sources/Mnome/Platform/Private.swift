@@ -26,6 +26,12 @@ enum Private {
 
     private static let getDark = symbol(skyLight, "SLSGetAppearanceThemeLegacy", as: (@convention(c) () -> Bool).self)
     private static let putDark = symbol(skyLight, "SLSSetAppearanceThemeLegacy", as: (@convention(c) (Bool) -> Void).self)
+    private static let applicationServices = "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
+    private static let getDockAutoHide = symbol(applicationServices, "CoreDockGetAutoHideEnabled", as: (@convention(c) () -> Bool).self)
+    private static let putDockAutoHide = symbol(applicationServices, "CoreDockSetAutoHideEnabled", as: (@convention(c) (Bool) -> Void).self)
+    /// The Mac Dock's auto-hide, switched live, as System Settings does; nil when this macOS cannot.
+    static var dockAutoHide: Bool? { putDockAutoHide == nil ? nil : getDockAutoHide?() }
+    static func setDockAutoHide(_ on: Bool) { putDockAutoHide?(on) }
     private static let connection = symbol(skyLight, "SLSMainConnectionID", as: (@convention(c) () -> Int32).self)
     private static let displaySpaces = symbol(skyLight, "SLSCopyManagedDisplaySpaces", as: (@convention(c) (Int32) -> Unmanaged<CFArray>?).self)
     /// Each display's Spaces, as Mission Control knows them; nil when this macOS cannot say.

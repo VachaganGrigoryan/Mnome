@@ -89,4 +89,40 @@ final class ShortcutTableTests: XCTestCase {
         XCTAssertEqual(ShortcutTable(stored: t.stored), t)
         XCTAssertEqual(ShortcutTable(stored: Data("junk".utf8)), ShortcutTable()); XCTAssertEqual(ShortcutTable(stored: nil), ShortcutTable())
     }
+    func testAltTabSessionsEndOnTheirOwnModifier() {
+        var r = KeyRouter(); let option: UInt64 = 0x8_0020, superFlags: UInt64 = 0x10_0010
+        XCTAssertEqual(r.keyDown(key: 48, flags: option, repeated: false), .switcher(.begin(windows: false, backwards: false)))
+        XCTAssertEqual(r.keyDown(key: 48, flags: option | 0x2_0002, repeated: true), .switcher(.next(backwards: true)))
+        XCTAssertEqual(r.keyDown(key: 0, flags: option, repeated: false), .swallow) // nothing else reaches an app meanwhile
+        XCTAssertEqual(r.flagsChanged(key: 56, flags: option), .pass) // Shift let go first
+        XCTAssertEqual(r.keyUp(key: 48), .swallow)
+        XCTAssertEqual(r.flagsChanged(key: 58, flags: 0), .switcher(.commit))
+        XCTAssertFalse(r.switching)
+        XCTAssertEqual(r.keyDown(key: 50, flags: superFlags, repeated: false), .switcher(.begin(windows: true, backwards: false)))
+        XCTAssertEqual(r.flagsChanged(key: 58, flags: superFlags | 0x8_0020), .pass) // another modifier is not the end
+        XCTAssertEqual(r.keyDown(key: 53, flags: superFlags, repeated: false), .switcher(.cancel))
+        XCTAssertEqual(r.flagsChanged(key: 54, flags: 0), .pass) // and no Super tap after it
+        XCTAssertEqual(r.keyDown(key: 48, flags: 0x10_0008, repeated: false), .pass) // left Command+Tab stays the Mac's
+        XCTAssertEqual(r.keyDown(key: 48, flags: superFlags, repeated: false), .switcher(.begin(windows: false, backwards: false)))
+        XCTAssertTrue(r.reset()); XCTAssertFalse(r.reset())
+    }
+    func testRightOptionAsSuperLeavesLeftOptionForTheSwitcher() {
+        var r = KeyRouter(); r.superKey = .rightOption
+        XCTAssertEqual(r.keyDown(key: 48, flags: 0x8_0020, repeated: false), .switcher(.begin(windows: false, backwards: false)))
+        XCTAssertEqual(r.flagsChanged(key: 61, flags: 0x8_0020 | 0x40), .pass)
+        XCTAssertEqual(r.flagsChanged(key: 58, flags: 0x8_0040), .switcher(.commit)) // only the left one started it
+    }
+    func testWorkspaceKeysAndGNOMEsSecondKeys() {
+        var table = ShortcutTable()
+        XCTAssertEqual(table.action(for: Chord(124, [.superKey, .option])), .workspaceNext)
+        XCTAssertEqual(table.action(for: Chord(121, .superKey)), .workspaceNext)
+        XCTAssertNil(table.set(.lock, Chord(121, .superKey))) // a second key gives way to the person's choice
+        XCTAssertEqual(table.action(for: Chord(121, .superKey)), .lock)
+    }
+    func testAPersonsOwnKeysWinOverANewStandard() throws {
+        let stored = try JSONEncoder().encode(["lock": Chord(124, [.superKey, .option])] as [String: Chord?])
+        let table = ShortcutTable(stored: stored)
+        XCTAssertEqual(table.action(for: Chord(124, [.superKey, .option])), .lock)
+        XCTAssertNil(table.chords[.workspaceNext])
+    }
 }

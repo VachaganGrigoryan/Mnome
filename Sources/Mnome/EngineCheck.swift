@@ -9,7 +9,7 @@ import MnomeSupport
 
     static func run() -> Never {
         if let flag = CommandLine.arguments.firstIndex(of: "--engine-check"), CommandLine.arguments.indices.contains(flag + 3), CommandLine.arguments[flag + 1] == "crash" { crash(pid_t(CommandLine.arguments[flag + 2])!, URL(fileURLWithPath: CommandLine.arguments[flag + 3])) }
-        Live.run("engine check") { if CommandLine.arguments.contains("apps") { try await apps() } else { try await all(); try await focusRules() } }
+        Live.run("engine check") { if CommandLine.arguments.contains("apps") { try await apps() } else { try await all(); try await focusRules(); try await switcherRules() } }
     }
     private static func manager(_ pid: pid_t, _ journal: URL) -> WindowManager { let m = WindowManager(journal: journal); m.registry.only = [pid]; m.start(); return m }
     /// Parks two windows, then dies without any clean-up.
@@ -257,6 +257,35 @@ import MnomeSupport
         check("a display arrangement without a free corner turns workspaces off", await Live.until(6) { !parkedTwo() && m.state?.workspacesOn == false }, "\(WindowManager.extraDisplays)")
         WindowManager.extraDisplays = []; m.displaysChanged()
         check("and its end turns them on again", await Live.until(6) { parkedTwo() && m.state?.workspacesOn == true })
+    }
+
+    // Alt+Tab, without keys: the keys themselves are in the unit tests and the key check
+
+    private static func switcherRules() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("mnome-switch-\(getpid())"); defer { try? FileManager.default.removeItem(at: folder) }
+        let a = try Live.Windows(), b = try Live.Windows(); defer { a.stop(); b.stop() }
+        for h in [a, b] { h.tell("close stubborn"); h.tell("close fixed") }
+        let m = WindowManager(journal: folder.appendingPathComponent("parked.json")); m.registry.only = [a.pid, b.pid]; m.start(); defer { m.shutDown() }
+        guard await Live.until(5, { m.state?.windows.count == 4 }) else { check("tracks two apps", false); return }
+        let s = SwitcherController(); s.windowManager = m
+        let front = { () async -> UInt64? in await m.registry.focusedWindow() }
+        let (a1, a2, b1) = (a.ids["one"]!, a.ids["two"]!, b.ids["one"]!)
+        m.send(.toWorkspace(a2, m.state!.workspaces.last!)); m.send(.toWorkspace(b.ids["two"]!, m.state!.workspaces.last!))
+        _ = m.focus(a1); _ = await Live.until { await front() == a1 }; _ = m.focus(b1); _ = await Live.until { await front() == b1 }; await Live.sleep(0.5)
+        let home = m.state!.current
+
+        s.handle(.begin(windows: false, backwards: false)); s.handle(.commit)
+        check("a quick Alt+Tab goes back to the app before", await Live.until { await front() == a1 })
+        s.handle(.begin(windows: false, backwards: false)); s.handle(.next(backwards: false)); s.handle(.cancel); await Live.sleep(1)
+        check("Escape changes nothing", await front() == a1)
+        s.handle(.begin(windows: true, backwards: false)); await Live.sleep(0.3)
+        check("the key above Tab offers the app's other window, on any workspace", s.switcher?.choice == a2, "\(String(describing: s.switcher?.choice))")
+        s.handle(.commit)
+        check("choosing it goes to its workspace, and it has the keyboard", await Live.until { await front() == a2 } && m.state?.current != home && m.state?.isShown(a2) == true)
+        UserDefaults.standard.set(true, forKey: "switcherCurrentWorkspace"); defer { UserDefaults.standard.removeObject(forKey: "switcherCurrentWorkspace") }
+        s.handle(.begin(windows: false, backwards: false))
+        check("current workspace only leaves out the others", s.switcher?.apps.flatMap(\.windows).allSatisfy { m.state?.isParked($0) == false } == true, "\(String(describing: s.switcher?.apps))")
+        s.handle(.cancel)
     }
 
     // Real apps, as fresh copies with settings of their own where the app allows it

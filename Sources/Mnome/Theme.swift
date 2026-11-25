@@ -305,6 +305,7 @@ struct PreferencesView: View {
     let actions: QuickActions
     @AppStorage("showTopBar") private var topBarOn = true
     @AppStorage("showDock") private var dockOn = true
+    @AppStorage("workspaces") private var workspacesOn = true
     @State private var page = "appearance"
     var body: some View {
         VStack(spacing: 0) {
@@ -323,6 +324,9 @@ struct PreferencesView: View {
                                 SwitchRow(title: element.title, isOn: Binding(get: { macChrome.hidden.contains(element) }, set: { macChrome.set(element, hidden: $0) }))
                             }
                             ActionRow(title: "Restore All macOS Settings", icon: "arrow.uturn.backward", action: { macChrome.restoreAll() }).disabled(!macChrome.needsRestore)
+                        }
+                        PreferencesGroup(title: "Workspaces", footer: "Workspaces are on the main display; other displays show all their windows. They are off while Stage Manager is on, and assume one macOS desktop (Space) per display.") {
+                            SwitchRow(title: "Workspaces", isOn: Binding(get: { workspacesOn }, set: { workspacesOn = $0; actions.setWorkspaces($0) }))
                         }
                         PreferencesGroup(title: "Windows", footer: "Moves every window that is out of sight back onto the screen. Window management does not support Stage Manager yet.") {
                             ActionRow(title: "Bring Back All Windows", icon: "macwindow.on.rectangle", action: { actions.bringBackWindows() })
@@ -358,11 +362,16 @@ struct PreferencesView: View {
 }
 struct KeyboardPreferences: View {
     @ObservedObject private var store = ShortcutStore.shared
+    @AppStorage("switcherCurrentWorkspace") private var currentWorkspace = false
     private var rectangle: Bool { NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.knollsoft.Rectangle" } }
     var body: some View {
         PreferencesGroup(title: "Super Key", footer: store.enabled && !store.listening ? "Mnome cannot listen to the keyboard. Allow it under System Settings → Privacy & Security → Accessibility." : "Tap it alone to open Activities. Other shortcuts with this key still reach your apps unless they are listed below.\(rectangle ? " Rectangle is running; its shortcuts keep working too." : "")") {
             SwitchRow(title: "Use Shell Shortcuts", isOn: Binding(get: { store.enabled }, set: { store.setEnabled($0) }))
             ForEach(SuperKey.allCases, id: \.self) { key in CheckRow(title: key.title, selected: store.superKey == key) { store.use(key) }.disabled(!store.enabled) }
+        }
+        PreferencesGroup(title: "Switch Applications", footer: "Option+Tab or Super+Tab; the key above Tab for one application's windows.") {
+            CheckRow(title: "All Workspaces", selected: !currentWorkspace) { currentWorkspace = false }
+            CheckRow(title: "Current Workspace Only", selected: currentWorkspace) { currentWorkspace = true }
         }
         if let message = store.message { Text(message).font(.callout).foregroundStyle(ThemePalette.accentText) }
         ForEach(ShellAction.Group.allCases, id: \.self) { group in

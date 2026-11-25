@@ -35,7 +35,7 @@ The engine is tested live (Validation, above).
 
 ## Keyboard
 
-Right Command is Super: tapped alone it opens or closes Activities, and with another key it runs GNOME's shortcuts (Keyboard Shortcuts lists them, Preferences → Keyboard changes them or makes Right Option the Super key). Only the listed combinations are taken; every other Right Command combination, and all of Left Command, reaches apps untouched. Shortcuts are physical keys, so they stay in place when the keyboard layout changes.
+Right Command is Super: tapped alone it opens or closes Activities, and with another key it runs GNOME's shortcuts (Keyboard Shortcuts lists them, Preferences → Keyboard changes them or makes Right Option the Super key). Only the listed combinations are taken; every other Right Command combination, and all of Left Command, reaches apps untouched. Shortcuts are physical keys, so they stay in place when the keyboard layout changes. Workspaces: Super+Option+←/→ (or Super+Page Up/Down) switch, with Shift they take the window along, Super+Home/End go to the first and last; a row of dots shows where you are. Option+Tab or Super+Tab switches applications as GNOME does (Shift goes back, the key above Tab cycles one application's windows, Escape cancels, letting go chooses); Preferences → Keyboard chooses all workspaces or the current one only.
 
 Listening needs Accessibility and stops while macOS protects a password field; Control–Option–Space still opens Activities then. No key is stored or logged. Shortcuts act on the window in front, and do nothing when that is a dialog or a window Mnome does not track.
 

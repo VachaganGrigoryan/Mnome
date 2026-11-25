@@ -60,7 +60,7 @@ import MnomeSupport
 struct QuickActions {
     var openMnome: () -> Void = {}, preferences: () -> Void = {}, shortcuts: () -> Void = {}, about: () -> Void = {}, quit: () -> Void = {}
     var systemSettings: () -> Void = {}, networkSettings: () -> Void = {}, batterySettings: () -> Void = {}
-    var focusDock: () -> Void = {}, focusTopBar: () -> Void = {}, toggleTopBar: () -> Void = {}, toggleDock: () -> Void = {}
+    var focusDock: () -> Void = {}, focusTopBar: () -> Void = {}, setWorkspaces: (Bool) -> Void = { _ in }, toggleTopBar: () -> Void = {}, toggleDock: () -> Void = {}
     var setShortcut: (ShortcutChoice) -> Void = { _ in }, removeFavorite: (String) -> Void = { _ in }, toggleMacChrome: () -> Void = {}, bringBackWindows: () -> Void = {}
 }
 

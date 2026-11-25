@@ -148,7 +148,7 @@ private final class Watcher: @unchecked Sendable {
             let id = reading.number.map(UInt64.init) ?? { nextID += 1; return nextID }()
             if windows[id] != nil { remove(id, appEnded: true) } // the number was reused; its old owner is gone
             let app = NSRunningApplication(processIdentifier: pid)
-            let window = TrackedWindow(id: id, pid: pid, app: app?.bundleIdentifier ?? app?.bundleURL?.path ?? "pid.\(pid)", ref: reading.ref, frame: reading.frame, minimized: reading.minimized, fullscreen: reading.fullscreen, fresh: !alreadyRunning.contains(pid))
+            let window = TrackedWindow(id: id, pid: pid, app: app?.bundleIdentifier ?? "\(app?.bundleURL?.path ?? "pid").\(pid)", ref: reading.ref, frame: reading.frame, minimized: reading.minimized, fullscreen: reading.fullscreen, fresh: !alreadyRunning.contains(pid))
             windows[id] = window; order[pid, default: []].append(id); seen.insert(id)
             onEvent(.opened(window)); if app?.isHidden == true { onEvent(.hidden(id, true)) }
             _ = await client.run(pid) { watcher.watch(reading.ref) }

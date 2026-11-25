@@ -235,6 +235,7 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
     let dock = DockController()
     let macChrome = MacChromeController()
     let windowManager = WindowManager()
+    let switcher = SwitcherController(), workspacePopup = WorkspacePopup()
     let model = Model(); var panel: NSPanel?; var panels: [NSPanel] = []; var status: NSStatusItem!; var hotkey: EventHotKeyRef?; var previous: NSRunningApplication?
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory); model.shortcutTitle = UserDefaults.standard.string(forKey: "shortcutTitle") ?? "Control–Option–Space"; model.discover(); model.close = { [weak self] in self?.dismiss(reactivate: $0) }
@@ -271,7 +272,7 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
             openMnome: { [weak self] in self?.showActivities() }, preferences: { [weak self] in self?.showPreferences() }, shortcuts: { [weak self] in self?.showKeyboardShortcuts() },
             about: { [weak self] in self?.showAbout() }, quit: { [weak self] in self?.quit() }, systemSettings: { [weak self] in self?.openSettings("") },
             networkSettings: { [weak self] in self?.openNetworkSettings() }, batterySettings: { [weak self] in self?.openBatterySettings() },
-            focusDock: { [weak self] in self?.focusDock() }, focusTopBar: { [weak self] in self?.focusTopBar() },
+            focusDock: { [weak self] in self?.focusDock() }, focusTopBar: { [weak self] in self?.focusTopBar() }, setWorkspaces: { [weak self] in self?.windowManager.workspacesWanted = $0 },
             toggleTopBar: { [weak self] in self?.setTopBarVisible(!(self?.topBar.enabled ?? true)) }, toggleDock: { [weak self] in self?.setDockVisible(!(self?.dock.enabled ?? true)) },
             setShortcut: { [weak self] in self?.applyShortcut($0) }, removeFavorite: { [weak self] in self?.dock.model.remove($0) },
             toggleMacChrome: { [weak self] in guard let self else { return }; self.macChrome.setAll(hidden: self.macChrome.hidden.isEmpty) }, bringBackWindows: { [weak self] in self?.bringBackWindows() })
@@ -346,6 +347,8 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
         let store = ShortcutStore.shared
         store.superTapped = { [weak self] in guard let self else { return }; if panel?.isVisible == true { dismiss() } else { showActivities() } }
         store.run = { [weak self] in self?.perform($0) }
+        switcher.windowManager = windowManager; switcher.endKeys = { store.endSwitcher() }
+        store.switcher = { [weak self] in self?.switcher.handle($0) }
         store.start()
     }
     func perform(_ action: ShellAction) {
@@ -368,8 +371,20 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
         case .moveRight: windowManager.withFocused { .toDisplay($0, .right) }
         case .moveUp: windowManager.withFocused { .toDisplay($0, .up) }
         case .moveDown: windowManager.withFocused { .toDisplay($0, .down) }
+        case .workspacePrevious: switchWorkspace { _ in .stepWorkspace(-1) }
+        case .workspaceNext: switchWorkspace { _ in .stepWorkspace(1) }
+        case .workspaceFirst: switchWorkspace { $0.workspaces.first.map(WMEvent.setWorkspace) }
+        case .workspaceLast: switchWorkspace { $0.workspaces.last.map(WMEvent.setWorkspace) }
+        case .carryPrevious, .carryNext:
+            let delta = action == .carryNext ? 1 : -1
+            Task { if let id = await windowManager.registry.focusedWindow(), windowManager.state?.isShown(id) == true { switchWorkspace { _ in .carryWindow(id, delta) } } }
         default: break
         }
+    }
+    private func switchWorkspace(_ make: (WMState) -> WMEvent?) {
+        guard windowManager.running, let state = windowManager.state, state.workspacesOn, let event = make(state) else { return }
+        windowManager.send(event)
+        if let now = windowManager.state, let i = now.workspaces.firstIndex(of: now.current) { workspacePopup.show(count: now.workspaces.count, current: i) }
     }
     @objc func bringBackWindows() {
         Task {

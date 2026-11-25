@@ -13,16 +13,48 @@ public struct SuperTap: Sendable {
 }
 /// Decides what happens to each key event. Pure, so the tap itself stays trivial.
 public struct KeyRouter: Sendable {
-    public enum Decision: Equatable, Sendable { case pass, swallow, superTap, run(ShellAction), recorded(Chord), cancelled }
+    public enum Decision: Equatable, Sendable { case pass, swallow, superTap, run(ShellAction), recorded(Chord), cancelled, switcher(SwitcherKey) }
+    /// Alt+Tab, while its modifier is held. Everything else typed meanwhile is the switcher's.
+    public enum SwitcherKey: Equatable, Sendable { case begin(windows: Bool, backwards: Bool), next(backwards: Bool), windows, up, commit, cancel }
     public var table = ShortcutTable(), superKey = SuperKey.rightCommand, recording = false
     private var tap = SuperTap(), held: Set<Int64> = []
+    /// The device bits of the modifier that started it, so the session ends when exactly that key is let go.
+    private var session: UInt64?
     public init() {}
     public mutating func pointer() { tap.cancel() }
     /// After macOS switched the tap off, nothing known about held keys can be trusted.
-    public mutating func reset() { tap.cancel(); held = [] }
-    public mutating func flagsChanged(key: Int64, flags: UInt64) -> Decision { tap.flagsChanged(key: key, flags: flags, superKey: superKey) && !recording ? .superTap : .pass }
+    /// True when a switcher session was open and must be cancelled.
+    @discardableResult public mutating func reset() -> Bool { tap.cancel(); held = []; defer { session = nil }; return session != nil }
+    public var switching: Bool { session != nil }
+    public mutating func flagsChanged(key: Int64, flags: UInt64) -> Decision {
+        if let bits = session { if flags & bits == 0 { session = nil; tap.cancel(); return .switcher(.commit) }; return .pass }
+        return tap.flagsChanged(key: key, flags: flags, superKey: superKey) && !recording ? .superTap : .pass
+    }
+    /// Option+Tab and Super+Tab, with the key above Tab for one app's windows. Not in the table: GNOME fixes them too.
+    private mutating func startSwitcher(key: Int64, flags: UInt64) -> Decision? {
+        guard !recording, key == 48 || key == 50, let chord = Chord(key: key, flags: flags, superKey: superKey) else { return nil }
+        let rest = chord.modifiers.subtracting(.shift), bits: UInt64
+        if rest == .superKey { bits = superKey.flag } else if rest == .option { bits = flags & (0x20 | 0x40) & ~(superKey == .rightOption ? superKey.flag : 0) } else { return nil }
+        guard bits != 0 else { return nil }
+        session = bits; held.insert(key)
+        return .switcher(.begin(windows: key == 50, backwards: chord.modifiers.contains(.shift)))
+    }
     public mutating func keyDown(key: Int64, flags: UInt64, repeated: Bool) -> Decision {
         tap.cancel()
+        if session != nil {
+            held.insert(key)
+            switch key {
+            case 48: return .switcher(.next(backwards: flags & KeyFlags.shift != 0))
+            case 50: return .switcher(.windows)
+            case 123: return .switcher(.next(backwards: true))
+            case 124: return .switcher(.next(backwards: false))
+            case 125: return repeated ? .swallow : .switcher(.windows)
+            case 126: return repeated ? .swallow : .switcher(.up)
+            case 53: session = nil; return .switcher(.cancel)
+            case 36, 76: session = nil; return .switcher(.commit)
+            default: return .swallow
+            }
+        }
         // Whoever got the press gets the repeats and the release, whatever is held by then.
         if repeated { return held.contains(key) ? .swallow : .pass }
         held.remove(key) // a release we never saw
@@ -31,6 +63,7 @@ public struct KeyRouter: Sendable {
             guard let chord = Chord(key: key, flags: flags, superKey: superKey) else { return .swallow }
             return chord == Chord(53, []) ? .cancelled : .recorded(chord)
         }
+        if !repeated, let started = startSwitcher(key: key, flags: flags) { return started }
         guard let chord = Chord(key: key, flags: flags, superKey: superKey), let action = table.action(for: chord) else { return .pass }
         held.insert(key)
         return .run(action)

@@ -54,6 +54,7 @@ public enum ShellAction: String, CaseIterable, Codable, Sendable {
     case appGrid, quickSettings, lock
     case tileLeft, tileRight, maximize, restore, minimize, center, close, showDesktop, cycle, cycleBack
     case moveLeft, moveRight, moveUp, moveDown
+    case workspacePrevious, workspaceNext, carryPrevious, carryNext, workspaceFirst, workspaceLast
     case launch1, launch2, launch3, launch4, launch5, launch6, launch7, launch8, launch9
     public var launchIndex: Int? { rawValue.hasPrefix("launch") ? Int(rawValue.dropFirst(6)).map { $0 - 1 } : nil }
     public var title: String {
@@ -75,14 +76,21 @@ public enum ShellAction: String, CaseIterable, Codable, Sendable {
         case .moveRight: "Move to display on the right"
         case .moveUp: "Move to display above"
         case .moveDown: "Move to display below"
+        case .workspacePrevious: "Previous workspace"
+        case .workspaceNext: "Next workspace"
+        case .carryPrevious: "Move window to previous workspace"
+        case .carryNext: "Move window to next workspace"
+        case .workspaceFirst: "First workspace"
+        case .workspaceLast: "Last workspace"
         default: "Open dash app \((launchIndex ?? 0) + 1)"
         }
     }
-    public enum Group: String, CaseIterable, Sendable { case shell = "Shell", windows = "Windows", displays = "Displays", dash = "Dash" }
+    public enum Group: String, CaseIterable, Sendable { case shell = "Shell", windows = "Windows", workspaces = "Workspaces", displays = "Displays", dash = "Dash" }
     public var group: Group {
         switch self {
         case .appGrid, .quickSettings, .lock: .shell
         case .moveLeft, .moveRight, .moveUp, .moveDown: .displays
+        case .workspacePrevious, .workspaceNext, .carryPrevious, .carryNext, .workspaceFirst, .workspaceLast: .workspaces
         default: launchIndex == nil ? .windows : .dash
         }
     }
@@ -106,6 +114,12 @@ public enum ShellAction: String, CaseIterable, Codable, Sendable {
         case .moveRight: Chord(124, [.superKey, .shift])
         case .moveUp: Chord(126, [.superKey, .shift])
         case .moveDown: Chord(125, [.superKey, .shift])
+        case .workspacePrevious: Chord(123, [.superKey, .option])
+        case .workspaceNext: Chord(124, [.superKey, .option])
+        case .carryPrevious: Chord(123, [.superKey, .option, .shift])
+        case .carryNext: Chord(124, [.superKey, .option, .shift])
+        case .workspaceFirst: Chord(115, .superKey)
+        case .workspaceLast: Chord(119, .superKey)
         default: launchIndex.map { Chord([18, 19, 20, 21, 23, 22, 26, 28, 25][$0], .superKey) }
         }
     }
@@ -115,12 +129,15 @@ public enum ShellAction: String, CaseIterable, Codable, Sendable {
 public struct ShortcutTable: Equatable, Sendable {
     public private(set) var chords: [ShellAction: Chord]
     public init() { chords = ShellAction.allCases.reduce(into: [:]) { $0[$1] = $1.standard } }
-    public func action(for chord: Chord) -> ShellAction? { chords.first { $0.value == chord }?.key }
+    /// GNOME's second keys, fixed. Each works only while no shortcut uses its keys.
+    public static let alternates: [Chord: ShellAction] = [Chord(116, .superKey): .workspacePrevious, Chord(121, .superKey): .workspaceNext, Chord(116, [.superKey, .shift]): .carryPrevious, Chord(121, [.superKey, .shift]): .carryNext]
+    public func action(for chord: Chord) -> ShellAction? { chords.first { $0.value == chord }?.key ?? Self.alternates[chord] }
+    private func assigned(_ chord: Chord) -> ShellAction? { chords.first { $0.value == chord }?.key }
     public enum Refusal: Error, Equatable { case notAllowed, taken(ShellAction) }
     public mutating func set(_ action: ShellAction, _ chord: Chord?) -> Refusal? {
         guard let chord else { chords[action] = nil; return nil }
         guard chord.isAllowed else { return .notAllowed }
-        if let owner = self.action(for: chord), owner != action { return .taken(owner) }
+        if let owner = assigned(chord), owner != action { return .taken(owner) }
         chords[action] = chord; return nil
     }
     public mutating func reset() { self = ShortcutTable() }
@@ -130,6 +147,8 @@ public struct ShortcutTable: Equatable, Sendable {
         self.init()
         guard let data, let changes = try? JSONDecoder().decode([String: Chord?].self, from: data) else { return }
         for name in changes.keys { if let action = ShellAction(rawValue: name) { chords[action] = nil } } // first, so swapped pairs do not collide
+        // A person's own keys win over a standard added since: that one starts unassigned.
+        for case let (name, chord?) in changes { if let owner = assigned(chord), changes[owner.rawValue] == nil, ShellAction(rawValue: name) != nil { chords[owner] = nil } }
         for (name, chord) in changes { if let action = ShellAction(rawValue: name), let chord { _ = set(action, chord) } }
     }
 }

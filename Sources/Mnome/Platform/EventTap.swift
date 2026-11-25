@@ -8,6 +8,8 @@ final class EventTap: @unchecked Sendable {
     private let thread = RunLoopThread("dev.mnome.keys")
     private var keys: CFMachPort?, pointer: CFMachPort?, router = KeyRouter() // only on the tap thread
 
+    /// When a release was missed, for example while macOS protected a password field.
+    func endSwitcher() { thread.perform { self.router.reset() } }
     func configure(_ table: ShortcutTable, _ superKey: SuperKey, recording: Bool) { thread.perform { self.router.table = table; self.router.superKey = superKey; self.router.recording = recording } }
     func start() -> Bool { thread.sync { self.open() } }
     func stop() { thread.sync { self.close() } }
@@ -40,15 +42,16 @@ final class EventTap: @unchecked Sendable {
         case .keyDown: decision = router.keyDown(key: code, flags: flags, repeated: event.getIntegerValueField(.keyboardEventAutorepeat) != 0)
         case .keyUp: decision = router.keyUp(key: code)
         default: // macOS switched it off, for example after a slow moment
-            router.reset(); if let keys { CGEvent.tapEnable(tap: keys, enable: true) }
+            if router.reset() { DispatchQueue.main.async { MainActor.assumeIsolated { self.onDecision(.switcher(.cancel)) } } }
+            if let keys { CGEvent.tapEnable(tap: keys, enable: true) }
             return true
         }
         switch decision {
         case .pass: return true
         case .swallow: return false
-        case .superTap, .run, .recorded, .cancelled:
+        case .superTap, .run, .recorded, .cancelled, .switcher:
             DispatchQueue.main.async { MainActor.assumeIsolated { self.onDecision(decision) } }
-            return decision == .superTap // the modifier itself always reaches apps
+            return type == .flagsChanged // the modifier itself always reaches apps
         }
     }
 }
@@ -62,7 +65,7 @@ final class EventTap: @unchecked Sendable {
     @Published private(set) var recording: ShellAction?
     @Published private(set) var message: String?
     @Published private(set) var listening = false
-    var run: (ShellAction) -> Void = { _ in }, superTapped: () -> Void = {}
+    var run: (ShellAction) -> Void = { _ in }, superTapped: () -> Void = {}, switcher: (KeyRouter.SwitcherKey) -> Void = { _ in }
     private let tap = EventTap()
     private var session = UUID()
     private init() { NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.stopRecording() } } }
@@ -81,6 +84,7 @@ final class EventTap: @unchecked Sendable {
         case let .run(action): run(action)
         case let .recorded(chord): if let action = recording { recording = nil; set(action, chord == Chord(51, []) ? nil : chord) }
         case .cancelled: recording = nil; apply()
+        case let .switcher(key): switcher(key)
         case .pass, .swallow: break
         }
     }
@@ -90,6 +94,7 @@ final class EventTap: @unchecked Sendable {
         let mine = UUID(); session = mine
         Task { try? await Task.sleep(for: .seconds(8)); if session == mine { stopRecording() } }
     }
+    func endSwitcher() { tap.endSwitcher() }
     func stopRecording() { guard recording != nil else { return }; recording = nil; apply() }
     func set(_ action: ShellAction, _ chord: Chord?) {
         switch table.set(action, chord) {

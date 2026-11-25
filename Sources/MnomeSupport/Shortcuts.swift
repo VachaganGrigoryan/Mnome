@@ -134,7 +134,8 @@ public struct ShortcutTable: Equatable, Sendable {
     public private(set) var chords: [ShellAction: Chord]
     public init() { chords = ShellAction.allCases.reduce(into: [:]) { $0[$1] = $1.standard } }
     /// GNOME's second keys, fixed. Each works only while no shortcut uses its keys.
-    public static let alternates: [Chord: ShellAction] = [Chord(116, .superKey): .workspacePrevious, Chord(121, .superKey): .workspaceNext, Chord(116, [.superKey, .shift]): .carryPrevious, Chord(121, [.superKey, .shift]): .carryNext]
+    public static let alternates: [Chord: ShellAction] = [Chord(116, .superKey): .workspacePrevious, Chord(121, .superKey): .workspaceNext, Chord(116, [.superKey, .shift]): .carryPrevious, Chord(121, [.superKey, .shift]): .carryNext,
+                                                          Chord(123, .control): .workspacePrevious, Chord(124, .control): .workspaceNext, Chord(123, [.control, .shift]): .carryPrevious, Chord(124, [.control, .shift]): .carryNext] // the Mac's Spaces keys
     public func action(for chord: Chord) -> ShellAction? { chords.first { $0.value == chord }?.key ?? Self.alternates[chord] }
     private func assigned(_ chord: Chord) -> ShellAction? { chords.first { $0.value == chord }?.key }
     public enum Refusal: Error, Equatable { case notAllowed, taken(ShellAction) }

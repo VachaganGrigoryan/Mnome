@@ -38,11 +38,16 @@ struct CFPreferencesStore: PreferenceStore {
     var summary: String { hidden.isEmpty ? "Visible" : hidden.count == MacElement.allCases.count ? "Hidden" : "Partly hidden" }
     /// What the person wants hidden while Mnome runs; Mnome's own bar and dock take the place of these two.
     private var chosen: Set<MacElement> {
-        get { UserDefaults.standard.stringArray(forKey: Self.chosenKey).map { Set($0.compactMap(MacElement.init(rawValue:))) } ?? [.dock, .menuBar] }
+        get { UserDefaults.standard.stringArray(forKey: Self.chosenKey).map { Set($0.compactMap(MacElement.init(rawValue:))) } ?? Set(MacElement.allCases) }
         set { UserDefaults.standard.set(newValue.map(\.rawValue), forKey: Self.chosenKey) }
     }
     private static let chosenKey = "macElementsToHide"
-    func hideChosen() { hide(chosen.subtracting(hidden)) }
+    /// Once: a choice saved before Mission Control, hot corners, animations and tiling existed gets them too, as asked on 25 November 2026.
+    func hideChosen() {
+        if !UserDefaults.standard.bool(forKey: "macElementsAdded"), UserDefaults.standard.object(forKey: Self.chosenKey) != nil { chosen.formUnion([.missionControl, .hotCorners, .animations, .tiling]) }
+        UserDefaults.standard.set(true, forKey: "macElementsAdded")
+        hide(chosen.subtracting(hidden))
+    }
     private func hide(_ elements: Set<MacElement>) {
         guard !elements.isEmpty else { return }
         for element in elements { snapshot.capture(element, store: store) }; persist() // originals are on disk before anything is changed
@@ -66,9 +71,8 @@ struct CFPreferencesStore: PreferenceStore {
     private func persist() { if let data = try? JSONEncoder().encode(snapshot) { UserDefaults.standard.set(data, forKey: Self.defaultsKey) } }
     private func finish(_ elements: [MacElement], quitting: Bool = false) {
         persist(); hidden = snapshot.hidden
-        var processes: [String] = []
-        if elements.contains(.dock) { processes.append("Dock") }
-        if elements.contains(.desktop) { processes += ["Finder", "WindowManager"] } else if elements.contains(.stageManager) { processes.append("WindowManager") }
+        var processes = Set(elements.compactMap(\.owner))
+        if elements.contains(.desktop) { processes.insert("WindowManager") } // the widgets
         for name in processes { let task = Process(); task.executableURL = URL(fileURLWithPath: "/usr/bin/killall"); task.arguments = [name]; try? task.run(); if quitting { task.waitUntilExit() } } // launchd relaunches them with the new prefs
         if elements.contains(.menuBar) { applyMenuBar(quitting: quitting) }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.changed?() }

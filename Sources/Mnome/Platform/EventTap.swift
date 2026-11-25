@@ -14,7 +14,7 @@ final class EventTap: @unchecked Sendable {
 
     /// When a release was missed, for example while macOS protected a password field.
     func endSwitcher() { thread.perform { self.router.reset() } }
-    func configure(_ table: ShortcutTable, _ superKey: SuperKey, recording: Bool) { thread.perform { self.router.table = table; self.router.superKey = superKey; self.router.recording = recording } }
+    func configure(_ table: ShortcutTable, _ superKey: SuperKey, recording: Bool, commandTab: Bool) { thread.perform { self.router.table = table; self.router.superKey = superKey; self.router.recording = recording; self.router.commandTab = commandTab } }
     func start() -> Bool { thread.sync { self.open() } }
     func stop() { thread.sync { self.close() } }
 
@@ -78,6 +78,8 @@ extension EventTap {
     @Published private(set) var table = ShortcutTable(stored: UserDefaults.standard.data(forKey: "shortcuts"))
     @Published private(set) var superKey = UserDefaults.standard.string(forKey: "superKey").flatMap(SuperKey.init(rawValue:)) ?? .rightCommand
     @Published private(set) var enabled = UserDefaults.standard.object(forKey: "shortcutsEnabled") as? Bool ?? true
+    /// Left Command+Tab opens Mnome's switcher, not the Mac's.
+    @Published var commandTab = UserDefaults.standard.object(forKey: "commandTab") as? Bool ?? true { didSet { UserDefaults.standard.set(commandTab, forKey: "commandTab"); apply() } }
     @Published private(set) var recording: ShellAction?
     @Published private(set) var message: String?
     @Published private(set) var listening = false
@@ -94,7 +96,7 @@ extension EventTap {
         listening = tap.start(); apply()
         if !listening { NSLog("Mnome: the keyboard could not be listened to") }
     }
-    private func apply() { tap.configure(table, superKey, recording: recording != nil) }
+    private func apply() { tap.configure(table, superKey, recording: recording != nil, commandTab: commandTab) }
     private func handle(_ decision: KeyRouter.Decision) {
         switch decision {
         case .superTap: superTapped()

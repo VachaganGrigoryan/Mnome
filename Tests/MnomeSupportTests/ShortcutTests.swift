@@ -102,9 +102,30 @@ final class ShortcutTableTests: XCTestCase {
         XCTAssertEqual(r.flagsChanged(key: 58, flags: superFlags | 0x8_0020), .pass) // another modifier is not the end
         XCTAssertEqual(r.keyDown(key: 53, flags: superFlags, repeated: false), .switcher(.cancel))
         XCTAssertEqual(r.flagsChanged(key: 54, flags: 0), .pass) // and no Super tap after it
-        XCTAssertEqual(r.keyDown(key: 48, flags: 0x10_0008, repeated: false), .pass) // left Command+Tab stays the Mac's
         XCTAssertEqual(r.keyDown(key: 48, flags: superFlags, repeated: false), .switcher(.begin(windows: false, backwards: false)))
         XCTAssertTrue(r.reset()); XCTAssertFalse(r.reset())
+    }
+    func testLeftCommandTabIsMnomesUnlessTurnedOff() {
+        var r = KeyRouter(); let left: UInt64 = 0x10_0008
+        XCTAssertEqual(r.keyDown(key: 48, flags: left, repeated: false), .switcher(.begin(windows: false, backwards: false)))
+        XCTAssertEqual(r.keyDown(key: 48, flags: left | 0x2_0002, repeated: false), .switcher(.next(backwards: true)))
+        XCTAssertEqual(r.flagsChanged(key: 54, flags: left | 0x10), .pass) // the right one too: still the left's session
+        XCTAssertEqual(r.flagsChanged(key: 54, flags: left), .pass)
+        XCTAssertEqual(r.flagsChanged(key: 55, flags: 0), .switcher(.commit))
+        XCTAssertEqual(r.keyDown(key: 50, flags: left | 0x2_0002, repeated: false), .switcher(.begin(windows: true, backwards: true)))
+        XCTAssertTrue(r.reset())
+        XCTAssertEqual(r.keyDown(key: 48, flags: left | 0x8_0020, repeated: false), .pass) // Command+Option+Tab is not a switch
+        r.commandTab = false
+        XCTAssertEqual(r.keyDown(key: 48, flags: left, repeated: false), .pass)
+    }
+    func testTheMacsMissionControlLaunchpadAndSpacesKeys() {
+        var r = KeyRouter()
+        XCTAssertEqual(r.keyDown(key: 160, flags: 0x80_0000, repeated: false), .superTap) // with Fn, as the top row sends it
+        XCTAssertEqual(r.keyUp(key: 160), .swallow)
+        XCTAssertEqual(r.keyDown(key: 131, flags: 0, repeated: false), .run(.appGrid))
+        XCTAssertEqual(r.keyDown(key: 160, flags: 0x10_0008, repeated: false), .pass) // with Command it is someone else's
+        XCTAssertEqual(r.keyDown(key: 124, flags: 0x4_0000, repeated: false), .run(.workspaceNext))
+        XCTAssertEqual(r.keyDown(key: 123, flags: 0x6_0000, repeated: false), .run(.carryPrevious))
     }
     func testRightOptionAsSuperLeavesLeftOptionForTheSwitcher() {
         var r = KeyRouter(); r.superKey = .rightOption

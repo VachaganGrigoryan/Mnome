@@ -76,10 +76,14 @@ import ScreenCaptureKit
         // First without the tap: this proves the test below would notice the app switcher.
         try await window.chord(48, with: 55, Keys.left); let switched = !window.isFront
         var seen: [KeyRouter.Decision] = []; let table = ShortcutTable()
-        let tap = EventTap(); tap.onDecision = { seen.append($0) }; tap.configure(table, .rightCommand, recording: false)
+        let tap = EventTap(); tap.onDecision = { seen.append($0) }; tap.configure(table, .rightCommand, recording: false, commandTab: true)
         guard tap.start() else { Live.check("the keyboard tap opens", false); return }; defer { tap.stop() }
 
         if switched { try await window.chord(48); Live.check("right Cmd+Tab is caught before the Mac's app switcher, for Mnome's own", seen.first == .switcher(.begin(windows: false, backwards: false)) && window.isFront, "\(seen), in front \(window.isFront)") } else { Live.skip("right Cmd+Tab before the app switcher", "left Cmd+Tab switched nothing either, so this would prove nothing") }
+        try await window.toFront(); await Live.sleep(0.5)
+        if switched { seen = []; try await window.chord(48, with: 55, Keys.left); Live.check("left Cmd+Tab is caught before the Mac's app switcher, for Mnome's own", seen.first == .switcher(.begin(windows: false, backwards: false)) && window.isFront, "\(seen), in front \(window.isFront)") }
+        try await window.toFront(); await Live.sleep(0.5)
+        seen = []; try await window.chord(124, with: 59, 0x4_0001, extra: Keys.arrow); Live.check("Ctrl+→ reaches Mnome before the Mac's Spaces", seen == [.run(.workspaceNext)], "\(seen)")
         try await window.toFront(); await Live.sleep(0.5)
         seen = []; await window.tap(54, Keys.right); Live.check("right Cmd alone is a Super tap", seen == [.superTap], "\(seen)")
         seen = []; await window.tap(55, Keys.left); Live.check("left Cmd alone is not", seen.isEmpty, "\(seen)")
@@ -110,13 +114,14 @@ import ScreenCaptureKit
 
     // Settings, with the originals on disk before anything changes
 
-    private struct Saved: Codable { var dark: Bool?, night: Bool?, menuBar: PrefValue? }
+    private struct Saved: Codable { var dark: Bool?, night: Bool?, menuBar: PrefValue?, chrome: MacChromeSnapshot? }
     @MainActor private enum Settings {
         static var file: URL { WindowManager.defaultJournal.deletingLastPathComponent().appendingPathComponent("system-check.json") }
         private static let store = CFPreferencesStore()
         static var menuBar: PrefValue { CFPreferencesSynchronize(kCFPreferencesAnyApplication, kCFPreferencesCurrentUser, kCFPreferencesAnyHost); return store.get("NSGlobalDomain", "_HIHideMenuBar") }
         static func setMenuBar(_ value: PrefValue) { store.set("NSGlobalDomain", "_HIHideMenuBar", value); DistributedNotificationCenter.default().postNotificationName(NSNotification.Name("AppleInterfaceMenuBarHidingChangedNotification"), object: nil, userInfo: nil, deliverImmediately: true) }
         static func save(_ saved: Saved) throws { try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true); try JSONEncoder().encode(saved).write(to: file, options: .atomic) }
+        static func restart(_ parts: Set<MacElement>) { for name in Set(parts.compactMap(\.owner)) { let task = Process(); task.executableURL = URL(fileURLWithPath: "/usr/bin/killall"); task.arguments = [name]; try? task.run(); task.waitUntilExit() } }
         /// True when nothing is left to put back.
         static func putBack() -> Bool {
             guard FileManager.default.fileExists(atPath: file.path) else { return true }
@@ -124,6 +129,7 @@ import ScreenCaptureKit
             if let dark = saved.dark, Private.darkStyle != dark { Private.setDarkStyle(dark) }
             if let night = saved.night, Private.nightLight?.on != night { _ = Private.setNightLight(night) }
             if let value = saved.menuBar, menuBar != value { setMenuBar(value) }
+            if var chrome = saved.chrome, !chrome.needsRestore.isEmpty { let touched = chrome.restoreAll(store: store); restart(touched); guard chrome.needsRestore.isEmpty else { return false } }
             for _ in 0..<15 {
                 if saved.dark.map({ Private.darkStyle == $0 }) ?? true, saved.night.map({ Private.nightLight?.on == $0 }) ?? true, saved.menuBar.map({ menuBar == $0 }) ?? true { try? FileManager.default.removeItem(at: file); return true }
                 usleep(200_000)
@@ -139,8 +145,23 @@ import ScreenCaptureKit
             if let dark { Private.setDarkStyle(!dark); Live.check("dark style switches", await Live.wait { Private.darkStyle == !dark }); Private.setDarkStyle(dark); _ = await Live.wait { Private.darkStyle == dark } } else { Live.skip("switching dark style", automatic ? "the appearance is automatic" : "not available") }
             if let night { let asked = Private.setNightLight(!night); Live.check("Night Light switches", await Live.wait { Private.nightLight?.on == !night } && asked); _ = Private.setNightLight(night); _ = await Live.wait { Private.nightLight?.on == night } } else { Live.skip("switching Night Light", "it follows a schedule, or is not available") }
             try await menuBarCheck(original: menuBar)
+            try await shellParts(dark: dark, night: night, menuBar: menuBar)
         } catch { Live.check("settings", false, "\(error)") }
         Live.check("every setting is as it was", Settings.putBack() && Settings.menuBar == menuBar && (dark == nil || Private.darkStyle == dark) && (night == nil || Private.nightLight?.on == night))
+    }
+    /// Mnome's "Only Mnome" parts: each setting is written and read back, then every original returns. The originals are on disk first.
+    private static func shellParts(dark: Bool?, night: Bool?, menuBar: PrefValue) async throws {
+        let store = CFPreferencesStore(), parts: [MacElement] = [.missionControl, .hotCorners, .animations, .tiling]
+        var chrome = MacChromeSnapshot()
+        for part in parts { chrome.capture(part, store: store) }
+        try Settings.save(Saved(dark: dark, night: night, menuBar: menuBar, chrome: chrome))
+        let before = Dictionary(uniqueKeysWithValues: parts.flatMap(\.settings).map { ("\($0.domain)|\($0.key)", store.get($0.domain, $0.key)) })
+        for part in parts { chrome.hide(part, store: store) }
+        Settings.restart(Set(parts)); await Live.sleep(1.5)
+        for part in parts { Live.check("\(part.title) takes", part.settings.allSatisfy { store.get($0.domain, $0.key) == $0.hidden }, part.settings.map { "\($0.key)=\(store.get($0.domain, $0.key))" }.joined(separator: " ")) }
+        chrome.restoreAll(store: store); Settings.restart(Set(parts))
+        Live.check("and every original is back", chrome.needsRestore.isEmpty && parts.flatMap(\.settings).allSatisfy { store.get($0.domain, $0.key) == before["\($0.domain)|\($0.key)"] })
+        try Settings.save(Saved(dark: dark, night: night, menuBar: menuBar))
     }
     /// What a fresh process sees: how much of the top each screen keeps, and its notch. This one keeps an old answer.
     private static func gaps() async throws -> [(gap: Double, notch: Double)] {

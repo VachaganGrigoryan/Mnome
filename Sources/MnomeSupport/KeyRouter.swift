@@ -17,6 +17,8 @@ public struct KeyRouter: Sendable {
     /// Alt+Tab, while its modifier is held. Everything else typed meanwhile is the switcher's.
     public enum SwitcherKey: Equatable, Sendable { case begin(windows: Bool, backwards: Bool), next(backwards: Bool), windows, up, commit, cancel }
     public var table = ShortcutTable(), superKey = SuperKey.rightCommand, recording = false
+    /// Left Command+Tab opens Mnome's switcher instead of the Mac's.
+    public var commandTab = true
     private var tap = SuperTap(), held: Set<Int64> = []
     /// The device bits of the modifier that started it, so the session ends when exactly that key is let go.
     private var session: UInt64?
@@ -32,7 +34,12 @@ public struct KeyRouter: Sendable {
     }
     /// Option+Tab and Super+Tab, with the key above Tab for one app's windows. Not in the table: GNOME fixes them too.
     private mutating func startSwitcher(key: Int64, flags: UInt64) -> Decision? {
-        guard !recording, key == 48 || key == 50, let chord = Chord(key: key, flags: flags, superKey: superKey) else { return nil }
+        guard !recording, key == 48 || key == 50 else { return nil }
+        if commandTab, flags & KeyFlags.leftCommand != 0, flags & (KeyFlags.control | KeyFlags.option | superKey.flag) == 0 { // the Mac's Cmd+Tab, taken over
+            session = KeyFlags.leftCommand; held.insert(key)
+            return .switcher(.begin(windows: key == 50, backwards: flags & KeyFlags.shift != 0))
+        }
+        guard let chord = Chord(key: key, flags: flags, superKey: superKey) else { return nil }
         let rest = chord.modifiers.subtracting(.shift), bits: UInt64
         if rest == .superKey { bits = superKey.flag } else if rest == .option { bits = flags & (0x20 | 0x40) & ~(superKey == .rightOption ? superKey.flag : 0) } else { return nil }
         guard bits != 0 else { return nil }
@@ -64,6 +71,8 @@ public struct KeyRouter: Sendable {
             return chord == Chord(53, []) ? .cancelled : .recorded(chord)
         }
         if !repeated, let started = startSwitcher(key: key, flags: flags) { return started }
+        // The Mac keyboard's Mission Control and Launchpad keys, unmodified: GNOME's overview and app grid.
+        if flags & (KeyFlags.shift | KeyFlags.control | KeyFlags.option | KeyFlags.command) == 0, let fixed: Decision = key == 160 ? .superTap : key == 131 ? .run(.appGrid) : nil { held.insert(key); return fixed }
         guard let chord = Chord(key: key, flags: flags, superKey: superKey), let action = table.action(for: chord) else { return .pass }
         held.insert(key)
         return .run(action)

@@ -94,7 +94,7 @@ struct QuickSettingsView: View {
             QuickMenuRow(title: "Keyboard Shortcuts", action: run(actions.shortcuts))
             QuickMenuRow(title: "Top Bar", check: topBarOn, action: actions.toggleTopBar)
             QuickMenuRow(title: "Dock", check: dockOn, action: actions.toggleDock)
-            QuickMenuRow(title: "Hide the Mac Menu Bar and Dock", check: !macChrome.hidden.isEmpty, action: actions.toggleMacChrome)
+            QuickMenuRow(title: "Only Mnome (Hide the Mac's Shell)", check: !macChrome.hidden.isEmpty, action: actions.toggleMacChrome)
             QuickMenuRow(title: "Bring Back All Windows", action: run(actions.bringBackWindows))
             Divider().overlay(ShellPalette.ink(0.1)).padding(.vertical, 3)
             Text("Activities shortcut").font(.adwaita(13, .bold)).foregroundStyle(ShellPalette.dim).padding(.horizontal, 12).frame(maxWidth: .infinity, alignment: .leading)

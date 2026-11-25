@@ -8,16 +8,24 @@ public protocol PreferenceStore {
     func set(_ domain: String, _ key: String, _ value: PrefValue)
 }
 public enum MacElement: String, CaseIterable, Codable {
-    case dock, menuBar, desktop, stageManager
+    case dock, menuBar, desktop, stageManager, missionControl, hotCorners, animations, tiling
     public var title: String {
         switch self {
         case .dock: "Hide Dock"
         case .menuBar: "Hide Menu Bar"
         case .desktop: "Hide Desktop Icons & Widgets"
         case .stageManager: "Disable Stage Manager & Click to Show Desktop"
+        case .missionControl: "Disable Mission Control & Its Gestures"
+        case .hotCorners: "Disable Hot Corners"
+        case .animations: "Turn Off macOS Window Animations"
+        case .tiling: "Disable macOS Edge Tiling"
         }
     }
     public struct Setting { public let domain: String, key: String, hidden: PrefValue }
+    /// The process that reads these settings and must restart to see them.
+    public var owner: String? {
+        switch self { case .dock, .missionControl, .hotCorners, .animations: "Dock"; case .desktop: "Finder"; case .stageManager, .tiling: "WindowManager"; case .menuBar: nil }
+    }
     public var settings: [Setting] {
         switch self {
         case .dock: [Setting(domain: "com.apple.dock", key: "autohide", hidden: .bool(true)), Setting(domain: "com.apple.dock", key: "autohide-delay", hidden: .double(1000))]
@@ -27,6 +35,12 @@ public enum MacElement: String, CaseIterable, Codable {
                         Setting(domain: "com.apple.WindowManager", key: "StageManagerHideWidgets", hidden: .bool(true))]
         case .stageManager: [Setting(domain: "com.apple.WindowManager", key: "GloballyEnabled", hidden: .bool(false)),
                              Setting(domain: "com.apple.WindowManager", key: "EnableStandardClickToShowDesktop", hidden: .bool(false))]
+        case .missionControl: [Setting(domain: "com.apple.dock", key: "mcx-expose-disabled", hidden: .bool(true))]
+            + ["showMissionControlGestureEnabled", "showAppExposeGestureEnabled", "showDesktopGestureEnabled", "showLaunchpadGestureEnabled"].map { Setting(domain: "com.apple.dock", key: $0, hidden: .bool(false)) }
+        case .hotCorners: ["tl", "tr", "bl", "br"].map { Setting(domain: "com.apple.dock", key: "wvous-\($0)-corner", hidden: .int(1)) } // 1 is "no action"
+        case .animations: [Setting(domain: "NSGlobalDomain", key: "NSAutomaticWindowAnimationsEnabled", hidden: .bool(false)), Setting(domain: "NSGlobalDomain", key: "NSWindowResizeTime", hidden: .double(0.001)),
+                           Setting(domain: "com.apple.dock", key: "launchanim", hidden: .bool(false)), Setting(domain: "com.apple.dock", key: "expose-animation-duration", hidden: .double(0.001))]
+        case .tiling: ["EnableTilingByEdgeDrag", "EnableTopTilingByEdgeDrag", "EnableTilingOptionAccelerator"].map { Setting(domain: "com.apple.WindowManager", key: $0, hidden: .bool(false)) }
         }
     }
 }

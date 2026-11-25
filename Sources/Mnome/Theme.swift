@@ -383,7 +383,8 @@ struct KeyboardPreferences: View {
             SwitchRow(title: "Use Shell Shortcuts", isOn: Binding(get: { store.enabled }, set: { store.setEnabled($0) }))
             ForEach(SuperKey.allCases, id: \.self) { key in CheckRow(title: key.title, selected: store.superKey == key) { store.use(key) }.disabled(!store.enabled) }
         }
-        PreferencesGroup(title: "Switch Applications", footer: "Option+Tab or Super+Tab; the key above Tab for one application's windows.") {
+        PreferencesGroup(title: "Switch Applications", footer: "Option+Tab, Super+Tab or Command+Tab; the key above Tab for one application's windows.") {
+            SwitchRow(title: "Command+Tab Opens Mnome's Switcher", isOn: Binding(get: { store.commandTab }, set: { store.commandTab = $0 }))
             CheckRow(title: "All Workspaces", selected: !currentWorkspace) { currentWorkspace = false }
             CheckRow(title: "Current Workspace Only", selected: currentWorkspace) { currentWorkspace = true }
         }

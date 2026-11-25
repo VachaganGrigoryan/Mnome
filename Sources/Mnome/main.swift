@@ -26,6 +26,22 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
     @Published var filtered: [AppItem] = []
     @Published var appState: PresentationState = .loading
     @Published var shortcutTitle = "Control–Option–Space"
+    /// The app grid's folders, saved as they change.
+    @Published var folders: [AppFolder] = [] { didSet { if foldersLoaded { AppFolderStore().save(folders) }; updateEntries() } }
+    /// The grid's top level: apps and folders by name.
+    @Published private(set) var entries: [AppGridEntry] = []
+    private var foldersLoaded = false, byPath: [String: AppItem] = [:]
+    func item(_ path: String) -> AppItem? { byPath[path] }
+    private func updateEntries() { entries = AppFolders.entries(apps: apps.map { ($0.id, $0.name) }, folders: folders) }
+    /// Dropped on an app, the two make a folder; on a folder, it joins it.
+    func drop(_ app: String, on target: AppGridEntry) {
+        switch target {
+        case let .app(other): folders = AppFolders.make(app, other, id: UUID().uuidString, in: folders)
+        case let .folder(folder): folders = AppFolders.add(app, to: folder.id, in: folders)
+        }
+    }
+    func removeFromFolder(_ app: String) { folders = AppFolders.remove(app, in: folders) }
+    func renameFolder(_ id: String, to name: String) { folders = AppFolders.rename(id, to: name, in: folders) }
     var searchGeneration = UUID()
     func search() {
         searchGeneration = UUID(); let generation = searchGeneration
@@ -51,7 +67,11 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
                 }
             }
             let items = found.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-            Task { @MainActor in self.apps = items; self.search() }
+            Task { @MainActor in
+                self.apps = items; self.byPath = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+                if !self.foldersLoaded { self.folders = AppFolderStore().load { AppFolders.seed(apps: items.map(\.id)) }; self.foldersLoaded = true } else { self.updateEntries() }
+                self.search()
+            }
         }
     }
 }

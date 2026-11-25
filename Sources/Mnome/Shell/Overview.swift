@@ -24,6 +24,8 @@ final class ChromeHostingView<Content: View>: NSHostingView<Content> {
     @Published var apps = false
     @Published var selected: Int?
     @Published var page = 0
+    /// The folder whose dialog is open in the app grid.
+    @Published var folder: String?
 }
 extension Animation {
     static let overview = Animation.timingCurve(0.25, 0.46, 0.45, 0.94, duration: 0.25)
@@ -45,7 +47,7 @@ extension Animation {
     /// `following`: three fingers drive it from closed to open, through `follow`.
     func open(apps: Bool, following: Bool = false) {
         leaving?.cancel(); panels.forEach { $0.orderOut(nil) }; panels = []; stages = []; watches = []
-        isOpen = true; stage.apps = apps; stage.selected = nil; stage.page = 0; selectedWindow = nil; model.query = ""
+        isOpen = true; stage.apps = apps; stage.selected = nil; stage.page = 0; stage.folder = nil; selectedWindow = nil; model.query = ""
         snapshot = makeSnapshot(); wallpapers.load()
         let shown = snapshot.windows.filter { windowManager.state?.isShown($0.id) ?? false }.map(\.id)
         captures.refresh(shown + snapshot.windows.map(\.id).filter { !shown.contains($0) })
@@ -123,7 +125,7 @@ extension Animation {
         fadeChrome(to: 1)
     }
     var showsApps: Bool { isOpen && stage.apps }
-    func escape() { if !model.query.isEmpty { model.query = "" } else { close() } }
+    func escape() { if stage.folder != nil { withAnimation(.overview) { stage.folder = nil } } else if !model.query.isEmpty { model.query = "" } else { close() } }
     private func setApps(_ apps: Bool) {
         stage.apps = apps; stage.selected = nil
         for view in stages { view.set(progress: 1, apps: apps, duration: 0.25) }
@@ -178,7 +180,8 @@ extension Animation {
     }
     func turnPage(_ direction: Int) {
         guard let main else { return }
-        let grid = AppGrid(area: main.gridArea, count: model.apps.count)
+        guard stage.folder == nil else { return }
+        let grid = AppGrid(area: main.gridArea, count: model.entries.count)
         withAnimation(.overview) { stage.page = min(grid.pages - 1, max(0, stage.page + direction)) }
     }
     func move(_ id: UInt64, to workspace: UInt64) { windowManager.send(.toWorkspace(id, workspace)) }
@@ -289,13 +292,13 @@ struct OverviewChrome: View {
     let controller: OverviewController
     @FocusState private var searchFocused: Bool
     @State private var found = SearchResults()
-    private var grid: AppGrid { AppGrid(area: geometry.gridArea, count: model.apps.count) }
+    private var grid: AppGrid { AppGrid(area: geometry.gridArea, count: model.entries.count) }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             Color.clear
             if !model.query.isEmpty { results }
-            else if stage.apps { AppGridView(model: model, stage: stage, grid: grid, launch: controller.launch) }
+            else if stage.apps { AppGridView(model: model, stage: stage, grid: grid, launch: controller.launch, escape: controller.escape) }
             searchEntry
             DockView(model: dock).fixedSize().position(x: geometry.size.width / 2, y: geometry.dashTop + geometry.dashHeight / 2)
         }
@@ -322,7 +325,7 @@ struct OverviewChrome: View {
     }
     private func step(_ delta: Int, vertical: Bool = false) -> KeyPress.Result {
         if model.query.isEmpty && stage.apps {
-            guard grid.count > 0 else { return .ignored }
+            guard grid.count > 0, stage.folder == nil else { return .ignored } // shortcut: no arrow keys inside a folder yet; Esc closes it
             let next = min(grid.count - 1, max(0, (stage.selected ?? stage.page * grid.perPage - (delta > 0 ? 1 : 0)) + delta * (vertical ? grid.columns : 1)))
             stage.selected = next; if next / grid.perPage != stage.page { withAnimation(.overview) { stage.page = next / grid.perPage } }
             return .handled
@@ -333,7 +336,15 @@ struct OverviewChrome: View {
         stage.selected = min(count - 1, max(0, (stage.selected ?? 0) + delta)); return .handled
     }
     private func activate() {
-        if model.query.isEmpty && stage.apps { if let app = model.apps[safe: stage.selected ?? -1] { controller.launch(app) }; return }
+        if model.query.isEmpty && stage.apps {
+            guard stage.folder == nil else { return }
+            switch model.entries[safe: stage.selected ?? -1] {
+            case let .app(path)?: if let app = model.item(path) { controller.launch(app) }
+            case let .folder(folder)?: withAnimation(.overview) { stage.folder = folder.id }
+            case nil: break
+            }
+            return
+        }
         if model.query.isEmpty { controller.chooseSelected(); return }
         if let result = found.all[safe: stage.selected ?? 0] ?? found.all.first { run(result) }
     }
@@ -409,41 +420,116 @@ struct AppGrid {
     var perPage: Int { columns * rows }
     var pages: Int { max(1, (count + perPage - 1) / perPage) }
 }
-/// GNOME's app grid: pages of icons and page dots. Arrows and Return come through the search entry.
+/// GNOME's app grid: pages of icons and folders, and page dots. Arrows and Return come through the search entry.
+/// Drop an app on another to make a folder, on a folder to add it; drag it out of the folder's dialog to take it out.
 struct AppGridView: View {
     @ObservedObject var model: Model
     @ObservedObject var stage: OverviewStage
     let grid: AppGrid
     let launch: (AppItem) -> Void
+    let escape: () -> Void
     @State private var running: Set<String> = []
+    @State private var target: String?
     var body: some View {
-        let page = min(stage.page, grid.pages - 1), items = Array(model.apps.dropFirst(page * grid.perPage).prefix(grid.perPage)), cell = AppGrid.cell
-        VStack(spacing: 12) {
-            Grid(horizontalSpacing: 0, verticalSpacing: 0) {
-                ForEach(0..<grid.rows, id: \.self) { row in
-                    GridRow { ForEach(0..<grid.columns, id: \.self) { column in
-                        let index = row * grid.columns + column
-                        if let item = items[safe: index] {
-                            Button { launch(item) } label: {
-                                VStack(spacing: 8) {
-                                    Image(nsImage: IconCache.file(item.url.path)).resizable().frame(width: 72, height: 72)
-                                    Text(item.name).font(.adwaita(14.667)).lineLimit(1).truncationMode(.tail)
-                                    Circle().fill(running.contains(item.url.path) ? Color.white : .clear).frame(width: 5, height: 5)
-                                }.padding(10).frame(width: cell.width - 12, height: cell.height - 12)
-                                .background(RoundedRectangle(cornerRadius: 24).fill(Color.white.opacity(stage.selected == page * grid.perPage + index ? 0.17 : 0)))
-                            }.buttonStyle(ShellButtonStyle(radius: 24)).frame(width: cell.width, height: cell.height).help(item.name).accessibilityLabel(item.name)
-                        } else { Color.clear.frame(width: cell.width, height: cell.height) }
+        let page = min(stage.page, grid.pages - 1), items = Array(model.entries.dropFirst(page * grid.perPage).prefix(grid.perPage)), cell = AppGrid.cell
+        ZStack {
+            VStack(spacing: 12) {
+                Grid(horizontalSpacing: 0, verticalSpacing: 0) {
+                    ForEach(0..<grid.rows, id: \.self) { row in
+                        GridRow { ForEach(0..<grid.columns, id: \.self) { column in
+                            let index = row * grid.columns + column
+                            if let entry = items[safe: index] { tile(entry, selected: stage.selected == page * grid.perPage + index).frame(width: cell.width, height: cell.height) }
+                            else { Color.clear.frame(width: cell.width, height: cell.height) }
+                        } }
+                    }
+                }.id(page).transition(.push(from: .trailing))
+                if grid.pages > 1 {
+                    HStack(spacing: 10) { ForEach(0..<grid.pages, id: \.self) { i in
+                        Button { withAnimation(.overview) { stage.page = i } } label: { Circle().fill(Color.white.opacity(i == page ? 1 : 0.4)).frame(width: 8, height: 8).padding(4) }.buttonStyle(.plain).accessibilityLabel("Page \(i + 1)")
                     } }
                 }
-            }.id(page).transition(.push(from: .trailing))
-            if grid.pages > 1 {
-                HStack(spacing: 10) { ForEach(0..<grid.pages, id: \.self) { i in
-                    Button { withAnimation(.overview) { stage.page = i } } label: { Circle().fill(Color.white.opacity(i == page ? 1 : 0.4)).frame(width: 8, height: 8).padding(4) }.buttonStyle(.plain).accessibilityLabel("Page \(i + 1)")
-                } }
             }
+            if let id = stage.folder, let folder = model.folders.first(where: { $0.id == id }) { FolderDialog(model: model, folder: folder, running: running, launch: launch, close: escape).transition(.opacity) }
         }
         .frame(width: grid.area.width, height: grid.area.height).offset(x: grid.area.minX, y: grid.area.minY)
         .onAppear { running = Set(NSWorkspace.shared.runningApplications.compactMap { $0.bundleURL?.path }) }
+        .onChange(of: model.folders) { _, folders in if let id = stage.folder, !folders.contains(where: { $0.id == id }) { stage.folder = nil } } // its last apps were taken out
+    }
+    @ViewBuilder private func tile(_ entry: AppGridEntry, selected: Bool) -> some View {
+        let lit = selected || target == entry.id
+        switch entry {
+        case let .app(path):
+            if let item = model.item(path) {
+                AppTile(item: item, running: running.contains(path), lit: lit) { launch(item) }
+                    .draggable(path) { AppTileIcon(path: path, size: 72) }
+                    .dropDestination(for: String.self) { paths, _ in drop(paths, on: entry) } isTargeted: { target = $0 ? entry.id : (target == entry.id ? nil : target) }
+            }
+        case let .folder(folder):
+            Button { withAnimation(.overview) { stage.folder = folder.id } } label: {
+                VStack(spacing: 8) {
+                    LazyVGrid(columns: [GridItem(.fixed(30), spacing: 6), GridItem(.fixed(30), spacing: 6)], spacing: 6) {
+                        ForEach(folder.apps.prefix(4), id: \.self) { AppTileIcon(path: $0, size: 30) }
+                    }.frame(width: 72, height: 72).background(RoundedRectangle(cornerRadius: 18).fill(Color.white.opacity(0.12)))
+                    Text(folder.name).font(.adwaita(14.667)).lineLimit(1).truncationMode(.tail)
+                    Circle().fill(Color.clear).frame(width: 5, height: 5)
+                }.padding(10).frame(width: AppGrid.cell.width - 12, height: AppGrid.cell.height - 12)
+                .background(RoundedRectangle(cornerRadius: 24).fill(Color.white.opacity(lit ? 0.17 : 0)))
+            }.buttonStyle(ShellButtonStyle(radius: 24)).help(folder.name).accessibilityLabel("\(folder.name) folder, \(folder.apps.count) applications")
+            .dropDestination(for: String.self) { paths, _ in drop(paths, on: entry) } isTargeted: { target = $0 ? entry.id : (target == entry.id ? nil : target) }
+        }
+    }
+    private func drop(_ paths: [String], on entry: AppGridEntry) -> Bool {
+        guard let path = paths.first, model.item(path) != nil, path != entry.id else { return false }
+        withAnimation(.overview) { model.drop(path, on: entry) }; target = nil
+        return true
+    }
+}
+struct AppTileIcon: View {
+    let path: String, size: CGFloat
+    var body: some View { Image(nsImage: IconCache.file(path)).resizable().frame(width: size, height: size) }
+}
+struct AppTile: View {
+    let item: AppItem, running: Bool, lit: Bool, launch: () -> Void
+    var body: some View {
+        Button(action: launch) {
+            VStack(spacing: 8) {
+                AppTileIcon(path: item.url.path, size: 72)
+                Text(item.name).font(.adwaita(14.667)).lineLimit(1).truncationMode(.tail)
+                Circle().fill(running ? Color.white : .clear).frame(width: 5, height: 5)
+            }.padding(10).frame(width: AppGrid.cell.width - 12, height: AppGrid.cell.height - 12)
+            .background(RoundedRectangle(cornerRadius: 24).fill(Color.white.opacity(lit ? 0.17 : 0)))
+        }.buttonStyle(ShellButtonStyle(radius: 24)).help(item.name).accessibilityLabel(item.name)
+    }
+}
+/// GNOME's folder dialog over the dimmed grid: its name, which can be edited, and its apps.
+struct FolderDialog: View {
+    @ObservedObject var model: Model
+    let folder: AppFolder, running: Set<String>, launch: (AppItem) -> Void, close: () -> Void
+    @State private var name = ""
+    var body: some View {
+        let apps = folder.apps.compactMap(model.item), columns = min(4, max(3, apps.count))
+        ZStack {
+            Color.black.opacity(0.45).frame(width: 8000, height: 8000).contentShape(Rectangle()).onTapGesture(perform: close) // the whole overview dims, not only the grid's band
+                .dropDestination(for: String.self) { paths, _ in guard let path = paths.first, folder.apps.contains(path) else { return false }; withAnimation(.overview) { model.removeFromFolder(path) }; return true }
+            VStack(spacing: 18) {
+                TextField("Folder Name", text: $name).textFieldStyle(.plain).font(.adwaita(22, .bold)).multilineTextAlignment(.center)
+                    .onSubmit { model.renameFolder(folder.id, to: name) }.frame(maxWidth: 360).accessibilityLabel("Folder name")
+                ScrollView {
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(AppGrid.cell.width), spacing: 0), count: columns), spacing: 0) {
+                        ForEach(apps) { item in
+                            AppTile(item: item, running: running.contains(item.id), lit: false) { launch(item) }.frame(width: AppGrid.cell.width, height: AppGrid.cell.height)
+                                .draggable(item.id) { AppTileIcon(path: item.id, size: 72) }
+                                .contextMenu { Button("Remove from Folder") { withAnimation(.overview) { model.removeFromFolder(item.id) } } }
+                        }
+                    }
+                }.frame(maxHeight: AppGrid.cell.height * 3)
+            }
+            .padding(.vertical, 24).padding(.horizontal, 30).frame(width: min(720, AppGrid.cell.width * CGFloat(columns) + 60))
+            .background(RoundedRectangle(cornerRadius: 64, style: .continuous).fill(Color(red: 0.22, green: 0.22, blue: 0.23)))
+        }
+        .onAppear { name = folder.name }
+        .onChange(of: folder.name) { _, now in name = now }
+        .onDisappear { if name != folder.name { model.renameFolder(folder.id, to: name) } }
     }
 }
 

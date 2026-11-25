@@ -25,6 +25,7 @@ import MnomeSupport
         pill = item("mnome.status", "System status and Mnome settings", #selector(openQuickSettings))
         clock = item("mnome.clock", "Date and time", #selector(openDateMenu))
         activities = item("mnome.activities", "Activities", #selector(activitiesClicked))
+        for item in [pill, clock, activities] { item?.isVisible = true } // macOS remembers a hidden item by its name
         activities?.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         topBar.itemFrame = { [weak self] kind in (kind == "date" ? self?.clock : self?.pill)?.button?.window?.frame }
         watch = topBar.status.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in DispatchQueue.main.async { self?.redraw() } }

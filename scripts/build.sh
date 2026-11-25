@@ -30,6 +30,27 @@ cat > build/Mnome.app/Contents/Info.plist <<'PLIST'
 <key>NSCalendarsFullAccessUsageDescription</key><string>Mnome shows the day's events in the calendar under the clock, as GNOME does. Nothing leaves your Mac.</string>
 </dict></plist>
 PLIST
+# GNOME's Show Applications for the Mac Dock: a tiny app that tells Mnome to open its app grid.
+helper="build/Mnome.app/Contents/Library/Show Applications.app"
+rm -rf "$helper"; mkdir -p "$helper/Contents/MacOS" "$helper/Contents/Resources"
+swiftc -O Helpers/ShowApplications.swift -o "$helper/Contents/MacOS/ShowApplications"
+iconset="$(mktemp -d)/AppGrid.iconset"; .build/release/Mnome --make-app-grid-icon "$iconset"; iconutil -c icns "$iconset" -o "$helper/Contents/Resources/AppGrid.icns"; rm -rf "$(dirname "$iconset")"
+cat > "$helper/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>dev.mnome.show-applications</string>
+<key>CFBundleName</key><string>Show Applications</string>
+<key>CFBundleDisplayName</key><string>Show Applications</string>
+<key>CFBundleIconFile</key><string>AppGrid.icns</string>
+<key>CFBundleExecutable</key><string>ShowApplications</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>LSMinimumSystemVersion</key><string>15.0</string>
+<key>LSUIElement</key><true/>
+</dict></plist>
+PLIST
+codesign --force --sign "${MNOME_SIGN_ID:--}" "$helper"
 # An ad-hoc signature changes every build, so macOS forgets permissions; a fixed identity keeps them.
 codesign --force --sign "${MNOME_SIGN_ID:--}" build/Mnome.app
 printf 'Built %s/build/Mnome.app\n' "$PWD"

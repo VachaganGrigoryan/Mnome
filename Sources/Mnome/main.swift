@@ -123,6 +123,8 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
         macChrome.changed = { [weak self] in self?.topBar.rebuild(); self?.dock.rebuild(); self?.windowManager.updateDisplays(); self?.updateDesktop() }
         desktop.showPreferences = { ShellUtilities.shared.showPreferences() }; updateDesktop()
         SpacesWatch.shared.macChrome = macChrome; SpacesWatch.shared.start()
+        // The Show Applications tile in the Mac Dock.
+        DistributedNotificationCenter.default().addObserver(forName: Notification.Name("dev.mnome.showApplications"), object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.overview.toggle(apps: true) } }
         topBar.actions = QuickActions(
             openMnome: { [weak self] in self?.showActivities() }, preferences: { [weak self] in self?.showPreferences() }, shortcuts: { [weak self] in self?.showKeyboardShortcuts() },
             about: { [weak self] in self?.showAbout() }, quit: { [weak self] in self?.quit() }, systemSettings: { [weak self] in self?.openSettings("") },
@@ -353,6 +355,7 @@ MainActor.assumeIsolated {
     guard Runner.application(named: "terminal")?.lastPathComponent == "Terminal.app", Runner.application(named: "ls -la") == nil else { fatalError("Run a Command does not find applications") }
     print("Mnome bridge self-test passed"); exit(0)
  }
+ if let flag = CommandLine.arguments.firstIndex(of: "--make-app-grid-icon"), CommandLine.arguments.indices.contains(flag + 1) { AppGridIcon.write(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1])); exit(0) }
  if CommandLine.arguments.contains("--permissions") {
     // Start it through `open`, so macOS checks Mnome itself rather than the terminal that launched it.
     print("Mnome permissions: accessibility \(AXIsProcessTrusted()) screen-recording \(CGPreflightScreenCaptureAccess())"); exit(0)

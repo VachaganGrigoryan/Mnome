@@ -29,3 +29,20 @@ final class DockTests: XCTestCase {
         XCTAssertEqual(rect.width, 1176); XCTAssertEqual(rect.minY, -192); XCTAssertTrue(visible.contains(rect))
     }
 }
+
+final class MacDockTileTests: XCTestCase {
+    private let safari: [String: Any] = ["tile-type": "file-tile", "tile-data": ["bundle-identifier": "com.apple.Safari"]]
+    func testTheTileGoesLastOnceAndLeavesTheRestAlone() {
+        let app = URL(fileURLWithPath: "/Applications/Mnome.app/Contents/Library/Show Applications.app")
+        let once = MacDockTile.with([safari], app: app), twice = MacDockTile.with(once, app: app)
+        XCTAssertEqual(twice.count, 2); XCTAssertTrue(MacDockTile.isOurs(twice[1]))
+        XCTAssertEqual((twice[0]["tile-data"] as? [String: Any])?["bundle-identifier"] as? String, "com.apple.Safari")
+        XCTAssertEqual(((twice[1]["tile-data"] as? [String: Any])?["file-data"] as? [String: Any])?["_CFURLString"] as? String, app.absoluteString)
+        XCTAssertEqual(MacDockTile.without(twice).count, 1)
+        XCTAssertFalse(MacDockTile.isOurs(MacDockTile.without(twice)[0]))
+        XCTAssertTrue(MacDockTile.isOurs(MacDockTile.with([safari, once[1], safari], app: app).last!), "moved back to the end if dragged")
+        let rewritten: [String: Any] = ["tile-type": "file-tile", "tile-data": ["file-data": ["_CFURLString": "file:///Users/x/Mnome.app/Contents/Library/Show%20Applications.app/", "_CFURLStringType": 15]]]
+        XCTAssertTrue(MacDockTile.isOurs(rewritten), "the Dock's own copy, without our bundle identifier")
+        XCTAssertEqual(MacDockTile.without([safari, rewritten]).count, 1)
+    }
+}

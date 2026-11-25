@@ -34,3 +34,19 @@ public enum DockGeometry {
         return CGRect(x: visible.midX - width / 2, y: visible.minY + 8, width: width, height: min(80, max(1, visible.height - 16)))
     }
 }
+/// Mnome's "Show Applications" tile in the Mac's own Dock: last in the section after the separator (`persistent-others`),
+/// where GNOME's dash keeps it; only Trash, which the Dock always ends with, comes after it.
+public enum MacDockTile {
+    public static let bundle = "dev.mnome.show-applications"
+    public static func tile(app: URL) -> [String: Any] {
+        ["tile-type": "file-tile", "tile-data": ["bundle-identifier": bundle, "file-label": "Show Applications", "file-data": ["_CFURLString": app.absoluteString, "_CFURLStringType": 15]] as [String: Any]]
+    }
+    /// By what it opens as well: the Dock rewrites its tiles and does not always keep the bundle identifier.
+    public static func isOurs(_ tile: [String: Any]) -> Bool {
+        let data = tile["tile-data"] as? [String: Any], url = (data?["file-data"] as? [String: Any])?["_CFURLString"] as? String ?? ""
+        return data?["bundle-identifier"] as? String == bundle || url.hasSuffix("/Contents/Library/Show%20Applications.app/") || url.hasSuffix("/Contents/Library/Show%20Applications.app")
+    }
+    /// Ours at the end, once, pointing at this copy of Mnome; everything else as it was.
+    public static func with(_ others: [[String: Any]], app: URL) -> [[String: Any]] { without(others) + [tile(app: app)] }
+    public static func without(_ apps: [[String: Any]]) -> [[String: Any]] { apps.filter { !isOurs($0) } }
+}

@@ -320,6 +320,8 @@ struct PreferencesView: View {
     @AppStorage("showTopBar") private var topBarOn = true
     @AppStorage("showDock") private var dockOn = false
     @AppStorage("workspaces") private var workspacesOn = true
+    @AppStorage("edgeTiling") private var edgeTiling = true
+    @AppStorage("hotCorner") private var hotCorner = true
     @State private var page = "appearance"
     var body: some View {
         VStack(spacing: 0) {
@@ -342,8 +344,12 @@ struct PreferencesView: View {
                         PreferencesGroup(title: "Workspaces", footer: "Workspaces are on the main display; other displays show all their windows. They are off while Stage Manager is on, and assume one macOS desktop (Space) per display.") {
                             SwitchRow(title: "Workspaces", isOn: Binding(get: { workspacesOn }, set: { workspacesOn = $0; actions.setWorkspaces($0) }))
                         }
-                        PreferencesGroup(title: "Windows", footer: "Moves every window that is out of sight back onto the screen. Window management does not support Stage Manager yet.") {
+                        PreferencesGroup(title: "Windows", footer: "Edge tiling: drag a window to the left or right edge to fill half the screen, into a corner for a quarter, to the top to maximize it. Bring Back moves every window that is out of sight back onto the screen. Window management does not support Stage Manager yet.") {
+                            SwitchRow(title: "Edge Tiling", isOn: $edgeTiling)
                             ActionRow(title: "Bring Back All Windows", icon: "macwindow.on.rectangle", action: { actions.bringBackWindows() })
+                        }
+                        PreferencesGroup(title: "Overview", footer: "Push the pointer into the top-left corner of the screen to open or close the overview.") {
+                            SwitchRow(title: "Hot Corner", isOn: $hotCorner)
                         }
                         PreferencesGroup(title: "Overview Shortcut", footer: "System-reserved shortcuts remain controlled by macOS.") {
                             ForEach(ShortcutChoice.all, id: \.title) { choice in

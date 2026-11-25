@@ -22,6 +22,13 @@ import MnomeSupport
         await keys.tap(54, Keys.right); Live.check("1 right Cmd opens Activities", overview)
         await keys.tap(54, Keys.right); Live.check("1 and closes it", !overview)
         Live.check("1 the keyboard returns to the app by itself", await keys.reaches(8, with: 55, Keys.left), "in front \(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "-")")
+        if UserDefaults(suiteName: "dev.mnome.shell")?.object(forKey: "hotCorner") as? Bool ?? true {
+            await push(into: .zero, by: 30); Live.check("H a light touch of the corner opens nothing", !overview)
+            await push(into: .zero, by: 140); Live.check("H pushing into the top-left corner opens the overview", overview)
+            await keys.tap(54, Keys.right); Live.check("H and Super closes it", !overview)
+            CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: 600, y: 400), mouseButton: .left)?.post(tap: .cghidEventTap)
+            try await keys.toFront()
+        }
         try await keys.chord(123, extra: Keys.arrow); let l = now(); Live.check("2 Super+Left tiles left", abs(l.minX) <= 1 && abs(l.width - screen.width / 2) <= 1 && l.height > screen.height * 0.7, "\(l)")
         try await keys.chord(124, extra: Keys.arrow); let r = now(); Live.check("2 Super+Right tiles right", abs(r.minX - screen.width / 2) <= 1 && abs(r.width - screen.width / 2) <= 1, "\(r)")
         try await keys.chord(124, extra: Keys.arrow); Live.check("3 Super+Right again restores", now() == start, "\(now()) want \(start)")
@@ -41,6 +48,17 @@ import MnomeSupport
     } }
 
     /// Every other app's windows, by number: frame and whether it is in the corner.
+    /// The pointer stops at the corner; the mouse keeps reporting movement, in steps of 10.
+    private static func push(into corner: CGPoint, by total: Int) async {
+        CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: 300, y: 300), mouseButton: .left)?.post(tap: .cghidEventTap)
+        try? await Task.sleep(for: .milliseconds(150))
+        for _ in 0..<(total / 10) {
+            let event = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: corner, mouseButton: .left)
+            event?.setDoubleValueField(.mouseEventDeltaX, value: -10); event?.setIntegerValueField(.mouseEventDeltaX, value: -10)
+            event?.post(tap: .cghidEventTap); try? await Task.sleep(for: .milliseconds(30))
+        }
+        try? await Task.sleep(for: .milliseconds(600))
+    }
     private static func others(_ keys: Keys) -> [UInt32: CGRect] {
         NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && $0.bundleIdentifier != "dev.mnome.shell" && $0.processIdentifier != keys.pid && !$0.isHidden }.reduce(into: [:]) { found, app in
             for ref in (try? WindowRegistry.list(app.processIdentifier)) ?? [] { if let id = Private.windowID(ref), (try? ref.flag("AXMinimized")) == false, (try? ref.value("AXSubrole") as? String) == "AXStandardWindow", let frame = try? ref.frame() { found[id] = frame } }

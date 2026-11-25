@@ -9,7 +9,7 @@ import MnomeSupport
 
     static func run() -> Never {
         if let flag = CommandLine.arguments.firstIndex(of: "--engine-check"), CommandLine.arguments.indices.contains(flag + 3), CommandLine.arguments[flag + 1] == "crash" { crash(pid_t(CommandLine.arguments[flag + 2])!, URL(fileURLWithPath: CommandLine.arguments[flag + 3])) }
-        Live.run("engine check") { if CommandLine.arguments.contains("displays") { try await displays() } else if CommandLine.arguments.contains("apps") { try await apps() } else { try await all(); try await focusRules(); try await switcherRules() } }
+        Live.run("engine check") { if CommandLine.arguments.contains("displays") { try await displays() } else if CommandLine.arguments.contains("drag") { try await drag() } else if CommandLine.arguments.contains("apps") { try await apps() } else { try await all(); try await focusRules(); try await switcherRules() } }
     }
     private static func manager(_ pid: pid_t, _ journal: URL) -> WindowManager { let m = WindowManager(journal: journal); m.registry.only = [pid]; m.start(); return m }
     /// Parks two windows, then dies without any clean-up.
@@ -24,6 +24,42 @@ import MnomeSupport
             kill(getpid(), SIGKILL)
         }
         NSApplication.shared.run(); exit(1)
+    }
+    /// Phase 8: the mouse, for real. Moves the pointer.
+    private static func drag() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("mnome-drag-\(getpid())"), journal = folder.appendingPathComponent("parked.json")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let helper = try Live.Windows(); defer { helper.stop() }
+        guard let one = helper.ids["one"], let two = helper.ids["two"] else { check("helper windows", false, "\(helper.ids)"); return }
+        let m = manager(helper.pid, journal), tiler = DragTiler(m); _ = tiler
+        let tracked = await wait { m.state?.windows.count == 4 }
+        guard tracked, let area = m.displays.first?.work.cgRect else { check("tracks the helper windows", false); return }
+        func post(_ type: CGEventType, _ p: CGPoint) { CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap) }
+        /// Presses, moves in steps as a hand would, and lets go.
+        func drag(from: CGPoint, to: CGPoint) async {
+            post(.mouseMoved, from); try? await Task.sleep(for: .milliseconds(80)); post(.leftMouseDown, from); try? await Task.sleep(for: .milliseconds(150))
+            for i in 1...24 { let t = CGFloat(i) / 24; post(.leftMouseDragged, CGPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t)); try? await Task.sleep(for: .milliseconds(25)) }
+            try? await Task.sleep(for: .milliseconds(250)); post(.leftMouseUp, to); try? await Task.sleep(for: .milliseconds(100))
+        }
+        func front(_ id: UInt64) async { _ = m.focus(id); for _ in 0..<40 { if await m.registry.focusedWindow() == id { break }; try? await Task.sleep(for: .milliseconds(50)) } }
+        func grip(_ name: String) -> CGPoint { let f = helper.frame(name)!; return CGPoint(x: f.midX, y: f.minY + 12) } // the title bar
+        let start = helper.frame("one")!, half = (area.width / 2).rounded(.down)
+        let left = CGRect(x: area.minX, y: area.minY, width: half, height: area.height), right = CGRect(x: area.minX + half, y: area.minY, width: area.width - half, height: area.height)
+
+        await front(one); await drag(from: grip("one"), to: CGPoint(x: area.minX + 2, y: area.midY))
+        check("dragged to the left edge, it fills the left half", await wait { near(helper.frame("one"), left) }, "\(String(describing: helper.frame("one"))) want \(left)")
+        await front(two); await drag(from: grip("two"), to: CGPoint(x: area.maxX - 2, y: area.midY))
+        check("dragged to the right edge, it fills the right half", await wait { near(helper.frame("two"), right) }, "\(String(describing: helper.frame("two"))) want \(right)")
+        try? await Task.sleep(for: .seconds(1))
+        await drag(from: CGPoint(x: left.maxX, y: area.midY), to: CGPoint(x: left.maxX + 150, y: area.midY))
+        check("dragging the shared edge resizes both tiles", await wait { abs((helper.frame("one")?.width ?? 0) - (half + 150)) <= 3 && abs((helper.frame("two")?.minX ?? 0) - (left.maxX + 150)) <= 3 }, "one \(String(describing: helper.frame("one"))) two \(String(describing: helper.frame("two")))")
+        try? await Task.sleep(for: .seconds(1))
+        await front(one); await drag(from: grip("one"), to: CGPoint(x: area.midX, y: area.midY))
+        check("dragged away, a tile gets its own size back", await wait { helper.frame("one").map { abs($0.width - start.width) <= 2 && abs($0.height - start.height) <= 2 } ?? false }, "\(String(describing: helper.frame("one"))) want size \(start.size)")
+        try? await Task.sleep(for: .seconds(1))
+        await drag(from: grip("one"), to: CGPoint(x: area.midX, y: area.minY + 2))
+        check("dragged to the top, it is maximized", await wait { near(helper.frame("one"), area) }, "\(String(describing: helper.frame("one"))) want \(area)")
+        m.shutDown()
     }
     private static func all() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("mnome-engine-\(getpid())"), journal = folder.appendingPathComponent("parked.json")

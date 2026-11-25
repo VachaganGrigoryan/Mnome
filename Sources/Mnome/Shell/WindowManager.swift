@@ -14,6 +14,10 @@ import MnomeSupport
     private var chains: [UInt64: Task<Void, Never>] = [:], originals: [UInt64: CGRect] = [:], records: [UInt64: ParkedRecord] = [:]
     private var screenObserver: NSObjectProtocol?
     let sink = KeyboardSink()
+    /// Displays as last given to the core, with their work areas.
+    private(set) var displays: [WMDisplay] = []
+    /// A move the person makes with the mouse, before the core hears of it. True when it was taken care of.
+    var userMoved: (UInt64, CGRect) -> Bool = { _, _ in false }
     /// Off in Preferences. Also off while Stage Manager is on or no display corner is free.
     var workspacesWanted = UserDefaults.standard.object(forKey: "workspaces") as? Bool ?? true { didSet { UserDefaults.standard.set(workspacesWanted, forKey: "workspaces"); updateDisplays() } }
     /// For the engine check: displays that are not there, to try other arrangements.
@@ -70,7 +74,7 @@ import MnomeSupport
             let ours = reserved(screen), work = WorkArea.rect(visible: screen.visibleFrame, bar: ours.bar, dock: ours.dock, screenTop: screen.frame.maxY)
             return WMDisplay(id: Self.displayID(screen), frame: WMRect(WorkArea.flip(screen.frame, primaryHeight: Self.primaryHeight)), work: WMRect(WorkArea.flip(work, primaryHeight: Self.primaryHeight)))
         }
-        send(.displays(displays, main: Self.displayID(main)))
+        self.displays = displays; send(.displays(displays, main: Self.displayID(main)))
         let frames = Self.displayFrames(), on = workspacesWanted && !Self.stageManager && frames.first.flatMap { Parking.corner(displays: frames, main: $0) } != nil
         if state?.workspacesOn != on { send(.workspacesOn(on)) }
     }
@@ -89,6 +93,11 @@ import MnomeSupport
         } catch { NSLog("Mnome: window event refused: %@", String(describing: error)) } // state is unchanged
     }
     var focused: UInt64? { state?.focus }
+    /// The snap zone and tile border under a point, in the core's coordinates.
+    func hit(_ point: CGPoint) -> WMHit? {
+        guard running, let result = try? coreChecked(["version": 1, "op": "wm_hit", "state": core, "x": Int(point.x.rounded()), "y": Int(point.y.rounded())]) else { return nil }
+        return WMHit(json: result)
+    }
     /// True when the window is known exactly, so no guessing by title is needed.
     /// Waits until no window is being moved or raised by us, or the time is up. True when settled.
     func settled(timeout: Duration) async -> Bool {
@@ -171,6 +180,7 @@ import MnomeSupport
             if Self.display(under: frame) == window.display { carryOut(id, .shown(exact(id, window.rect)), revision) } else { send(.moved(id, WMRect(frame), bySystem: true)) }
             return
         }
+        if userMoved(id, frame) { return }
         ledger.forget(id); send(.moved(id, WMRect(frame)))
     }
     /// Back from a lock or sleep: what moved meanwhile was macOS's doing, so windows go back where the person left them.

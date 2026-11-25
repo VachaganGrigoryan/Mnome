@@ -60,6 +60,8 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
     let dock = DockController()
     let macChrome = MacChromeController()
     let windowManager = WindowManager()
+    private var dragTiler: DragTiler?
+    private let hotCorner = HotCornerWatch()
     let switcher = SwitcherController(), workspacePopup = WorkspacePopup()
     private var workspaceWatch: AnyCancellable?, mediaWatch: AnyCancellable?, screensWatch: NSObjectProtocol?
     let osd = OSD()
@@ -166,12 +168,22 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
     func applicationWillTerminate(_ notification: Notification) { windowManager.shutDown(); topBar.stop(); dock.stop(); macChrome.restoreAll(quitting: true) }
     /// Window control needs Accessibility. Asked for once; after that it starts as soon as it is granted.
     func startWindowManager() {
-        if AXIsProcessTrusted() { windowManager.start(); startShortcuts(); return }
+        if AXIsProcessTrusted() { windowManager.start(); dragTiler = dragTiler ?? DragTiler(windowManager); startHotCorner(); startShortcuts(); return }
         if !UserDefaults.standard.bool(forKey: "askedForAccessibility") {
             UserDefaults.standard.set(true, forKey: "askedForAccessibility")
             AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.startWindowManager() }
+    }
+    /// Not over a full-screen window: there it would open while reaching for the app's own menu.
+    private func startHotCorner() {
+        hotCorner.triggered = { [weak self] in
+            guard let self else { return }
+            let fullScreen = windowManager.state.flatMap { s in s.focus.flatMap(s.window)?.fullscreen } ?? false
+            guard !fullScreen || overview.isOpen else { return }
+            overview.toggle(apps: false)
+        }
+        hotCorner.start()
     }
     func startShortcuts() {
         let store = ShortcutStore.shared

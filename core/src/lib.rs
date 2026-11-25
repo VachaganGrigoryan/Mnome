@@ -412,6 +412,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(hit["border"]["border"], json!({"column":{"boundary":1}}));
+        // The shapes the shell sends back while dragging.
+        let dragged = json!({"type":"drag_border","key":hit["border"]["key"],"border":hit["border"]["border"],"coordinate":700});
+        let out = step(&out["state"], dragged).unwrap();
+        assert_eq!(out["ops"][0]["rect"]["w"], 699); // boundaries are kept in ten-thousandths
+        let away = json!({"type":"drag_away","id":4294967295u64,"x":300,"y":40,"header":8});
+        assert!(step(&out["state"], away).unwrap()["ops"][0]["rect"].is_object());
         assert!(step(&out["state"], json!({"type":"nonsense"})).is_err());
         assert!(step(&out["state"], json!({"type":"closed","id":1,"extra":true})).is_err());
         let mut old = out["state"].clone();

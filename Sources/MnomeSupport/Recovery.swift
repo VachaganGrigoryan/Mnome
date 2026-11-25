@@ -28,15 +28,17 @@ public enum Recovery {
             guard let started = running[record.pid], abs(started - record.started) < 1 else { ended.append(record); steps.append(.drop(record)); continue }
             guard let window = live.first(where: { $0.pid == record.pid && abs($0.started - record.started) < 1 && $0.window == record.window }) else { steps.append(.keep(record)); continue }
             named.append(window)
-            steps.append(Parking.isParked(window.frame, displays: displays) ? .restore(record, window, onScreen(record.original, displays: displays, main: main)) : .drop(record))
+            steps.append(inSight(window.frame, displays: displays) ? .drop(record) : .restore(record, window, onScreen(record.original, displays: displays, main: main)))
         }
         // An app that restarted may reopen a window exactly where it was parked. Nothing else of that app is touched.
         for window in live where !named.contains(window) && Parking.isParked(window.frame, displays: displays) && ended.contains(where: { $0.bundle == window.bundle && ($0.parked.map { IntentLedger.close($0, window.frame, by: 4) } ?? false) }) { steps.append(.center(window, centered(window.frame.size, in: main))) }
         return steps
     }
+    /// Enough of it to see and grab. Anything less never counts as returned.
+    public static func inSight(_ frame: CGRect, displays: [CGRect]) -> Bool { displays.contains { let seen = $0.intersection(frame); return !seen.isNull && seen.width >= 40 && seen.height >= 20 } }
     /// The frame, unless its display is gone and it would be out of sight.
     public static func onScreen(_ frame: CGRect, displays: [CGRect], main: CGRect) -> CGRect {
-        displays.contains { let seen = $0.intersection(frame); return !seen.isNull && seen.width >= 40 && seen.height >= 20 } ? frame : centered(frame.size, in: main)
+        inSight(frame, displays: displays) ? frame : centered(frame.size, in: main)
     }
     public static func centered(_ size: CGSize, in area: CGRect) -> CGRect {
         let w = min(size.width, area.width), h = min(size.height, area.height)

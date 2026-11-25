@@ -13,6 +13,7 @@ import MnomeSupport
     private var core: Any = NSNull(), revision: UInt64 = 0, ledger = IntentLedger()
     private var chains: [UInt64: Task<Void, Never>] = [:], originals: [UInt64: CGRect] = [:], records: [UInt64: ParkedRecord] = [:]
     private var screenObserver: NSObjectProtocol?
+    private var unsettled = 0, parkedAgain: [UInt64: Int] = [:], unanswered: Set<UInt64> = [] // counts the times macOS may have moved windows
 
     nonisolated static var defaultJournal: URL { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Mnome/parked.json") }
     init(journal url: URL = WindowManager.defaultJournal) { journal = RecoveryJournal(url: url) }
@@ -24,6 +25,7 @@ import MnomeSupport
         updateDisplays()
         screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.updateDisplays() } }
         registry.onEvent = { [weak self] in self?.observe($0) }
+        registry.away.returned = { [weak self] in self?.settle() }
         Task { if !journal.records.isEmpty { _ = await recover() }; if running { registry.start() } } // before tracking, or parked frames would be taken for real ones
     }
     /// Quitting: the one place that waits, so no window is left in the corner.
@@ -74,15 +76,21 @@ import MnomeSupport
     private func observe(_ event: RegistryEvent) {
         switch event {
         case let .opened(w):
-            send(.opened(id: w.id, app: w.app, rect: WMRect(w.frame), minimized: w.minimized, fullscreen: w.fullscreen))
+            let displays = Self.displayFrames(), known = journal.records.contains { $0.window == w.id && $0.pid == w.pid }
+            // Apps place a new window beside a parked one, or where it was when they quit: out of sight either way.
+            let returning = records[w.id].flatMap { old in displays.first.map { Recovery.onScreen(old.original, displays: displays, main: $0) } } // closed while parked; macOS may have moved it since
+            let astray = returning ?? (w.fresh && !known && !w.minimized && !w.fullscreen && Parking.isParked(w.frame, displays: displays) ? displays.first.map { Recovery.centered(w.frame.size, in: $0) } : nil)
+            send(.opened(id: w.id, app: w.app, rect: WMRect(astray ?? w.frame), minimized: w.minimized, fullscreen: w.fullscreen))
+            if let astray { carryOut(w.id, .shown(astray), revision) }
             // Left over from an earlier session and only now in reach, for example on another native Space.
-            if journal.records.contains(where: { $0.window == w.id && $0.pid == w.pid }) { Task { await RecoveryRunner.restore(journal, only: { $0.window == w.id && $0.pid == w.pid }) } }
-        case let .closed(id):
-            chains.removeValue(forKey: id)?.cancel(); ledger.forget(id); originals[id] = nil
-            if let record = records.removeValue(forKey: id) { try? journal.remove(record) }
+            if known, returning == nil { Task { await RecoveryRunner.restore(journal, only: { $0.window == w.id && $0.pid == w.pid }) } }
+        case let .closed(id, appEnded):
+            chains.removeValue(forKey: id)?.cancel(); ledger.forget(id); originals[id] = nil; parkedAgain[id] = nil; unanswered.remove(id)
+            if let record = records[id], appEnded || !WindowServer.lists(id) { records[id] = nil; try? journal.remove(record) } // closed but kept by its app, it may open again in the corner
             send(.closed(id))
         case let .moved(id, frame): moved(id, frame)
         case let .minimized(id, on): send(.minimized(id, on))
+        case let .hidden(id, on): send(.hidden(id, on))
         case let .fullscreen(id, on): send(.fullscreen(id, on))
         case let .focused(id): if !ledger.isPuttingAway(id) { send(.focused(id)) }
         }
@@ -92,11 +100,23 @@ import MnomeSupport
         guard !ledger.isEcho(id, frame: frame) else { return }
         if records[id] != nil, Parking.isParked(frame, displays: Self.displayFrames()) {
             // Our corner, not the person's choice. If it should be visible, an earlier attempt failed: try again.
-            if let rect = state?.window(id)?.rect, ledger.target(id) != .parked { carryOut(id, .shown(exact(id, rect)), revision) }
+            if let rect = state?.window(id)?.rect, state?.isShown(id) == true { carryOut(id, .shown(exact(id, rect)), revision) }
+            return
+        }
+        if state?.isParked(id) == true, unanswered.remove(id) != nil { carryOut(id, .parked, revision); return }
+        if records[id] != nil, state?.isParked(id) == true { // macOS or its app brought it out
+            if parkedAgain[id] == unsettled { send(.sticky(id, true)) } else { parkedAgain[id] = unsettled; carryOut(id, .parked, revision) }
+            return
+        }
+        if registry.away.settling, NSEvent.pressedMouseButtons == 0, let window = state?.window(id), state?.isShown(id) == true, !window.fullscreen {
+            if Self.display(under: frame) == window.display { carryOut(id, .shown(exact(id, window.rect)), revision) } else { send(.moved(id, WMRect(frame), bySystem: true)) }
             return
         }
         ledger.forget(id); send(.moved(id, WMRect(frame)))
     }
+    /// Back from a lock or sleep: what moved meanwhile was macOS's doing, so windows go back where the person left them.
+    private func settle() { guard running else { return }; unsettled += 1; registry.rescanAll() }
+    private static func display(under frame: CGRect) -> UInt64? { NSScreen.screens.first { WorkArea.flip($0.frame, primaryHeight: primaryHeight).contains(CGPoint(x: frame.midX, y: frame.midY)) }.map(displayID) }
 
     // Execution
 
@@ -121,7 +141,9 @@ import MnomeSupport
         chain(id) { window in
             while self.ledger.isCurrent(id, revision: revision), !Task.isCancelled {
                 let (ok, frame) = await self.attempt(window, target)
-                switch self.ledger.finished(id, revision: revision, ok: ok, observed: frame) {
+                var seen = frame
+                if case .shown = target, let frame, !Recovery.inSight(frame, displays: Self.displayFrames()) { seen = nil } // not where it belongs, so still to be brought back
+                switch self.ledger.finished(id, revision: revision, ok: ok, observed: seen) {
                 case .stale: return
                 case .retry: try? await Task.sleep(for: .milliseconds(150))
                 case .done: self.settled(id, target, frame); self.checkLater(id); return
@@ -146,9 +168,9 @@ import MnomeSupport
             guard window.id < WindowRegistry.firstMadeUpID, case let .success(now) = await client.run(pid, { try ref.frame() }) else { return (false, nil) }
             if Parking.isParked(now, displays: displays) { return (records[window.id] != nil, now) }
             guard let started = ProcessIdentity.started(pid) else { return (false, nil) }
-            var record = ParkedRecord(pid: pid, started: started, bundle: window.app, window: window.id, original: now)
+            var record = ParkedRecord(pid: pid, started: started, bundle: window.app, window: window.id, original: records[window.id].flatMap { $0.started == started ? $0.original : nil } ?? now) // out of place it never came back, so the first frame still counts
             do { try journal.put(record) } catch { NSLog("Mnome: not parking, the recovery file could not be written: %@", String(describing: error)); return (false, now) }
-            records[window.id] = record; originals[window.id] = now
+            records[window.id] = record; originals[window.id] = record.original
             let parked = await client.run(pid) { client.pauseEnhancedInterface(pid); return try ref.move(to: Parking.origin(size: now.size, corner: corner, main: main)) { Parking.isParked($0, displays: displays) } }
             guard case let .success(frame) = parked, Parking.isParked(frame, displays: displays) else { if case let .success(frame) = parked { return (false, frame) }; return (false, nil) }
             record.parked = frame; records[window.id] = record; try? journal.put(record)
@@ -161,12 +183,13 @@ import MnomeSupport
     }
     /// A record goes only once its window has been read back in sight.
     private func settled(_ id: UInt64, _ target: IntentLedger.Target, _ frame: CGRect?) {
-        guard case .shown = target, let frame, !Parking.isParked(frame, displays: Self.displayFrames()) else { return }
+        guard case .shown = target, let frame, Recovery.inSight(frame, displays: Self.displayFrames()) else { return }
         originals[id] = nil
         if let record = records.removeValue(forKey: id) { try? journal.remove(record) } // read back where it belongs
     }
     private func gaveUp(_ id: UInt64, _ target: IntentLedger.Target, _ frame: CGRect?) {
         switch target {
+        case .parked where frame == nil: unanswered.insert(id) // its app did not answer: try again later, it may only be busy
         case .parked: send(.sticky(id, true)) // it stays visible on every workspace instead
         case .shown: settled(id, target, frame) // visible, if not exactly where asked
         case .minimized: break
@@ -235,7 +258,7 @@ enum RecoveryRunner {
     }
     private static func put(_ window: LiveWindow, _ frame: CGRect, _ all: [Found], _ displays: [CGRect]) async -> Bool {
         guard let ref = all.first(where: { $0.window == window })?.ref else { return false }
-        for _ in 0..<3 { if case let .success(now) = await AXClient.shared.run(window.pid, urgent: true, { try ref.place(frame) }), !Parking.isParked(now, displays: displays) { return true } }
+        for _ in 0..<3 { if case let .success(now) = await AXClient.shared.run(window.pid, urgent: true, { try ref.place(frame) }), Recovery.inSight(now, displays: displays) { return true } }
         return false
     }
     /// Any app's window that only a sliver of is visible. Only when the person asks: another tool may have put it there.
@@ -256,7 +279,7 @@ enum RecoveryRunner {
             guard let started = ProcessIdentity.started(pid), abs(started - mine[0].started) < 1 else { continue } // sorted out at the next launch
             AXClient.shared.run(pid, in: group) {
                 let found = try read(pid, mine[0].bundle, started), steps = Recovery.steps(records: mine, live: found.map(\.window), running: [pid: started], displays: displays, main: main)
-                let back = { (window: LiveWindow, frame: CGRect) in try found.first { $0.window == window }.map { !Parking.isParked(try $0.ref.place(frame), displays: displays) } ?? false }
+                let back = { (window: LiveWindow, frame: CGRect) in try found.first { $0.window == window }.map { Recovery.inSight(try $0.ref.place(frame), displays: displays) } ?? false }
                 for step in steps {
                     switch step {
                     case let .restore(record, window, frame): if try back(window, frame) { lock.withLock { done.append(record) } }

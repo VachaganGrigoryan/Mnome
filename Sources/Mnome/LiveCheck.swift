@@ -13,15 +13,13 @@ import MnomeSupport
     static func sleep(_ seconds: Double) async { try? await Task.sleep(for: .seconds(seconds)) }
     static func near(_ a: CGRect?, _ b: CGRect) -> Bool { a.map { IntentLedger.close($0, b) } ?? false }
     static func frame(_ pid: pid_t, _ id: UInt64) -> CGRect? { (try? WindowRegistry.list(pid))?.first { Private.windowID($0).map(UInt64.init) == id }.flatMap { try? $0.frame() } }
-    /// macOS then reports no windows at all.
-    static var locked: Bool { (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool ?? false }
     /// Runs the check and exits with the number of failures.
     static func run(_ name: String, _ body: @escaping @MainActor () async throws -> Void) -> Never {
         setvbuf(stdout, nil, _IOLBF, 0); signal(SIGPIPE, SIG_IGN) // a helper that quit must not end the check
         guard AXIsProcessTrusted() else { print("The \(name) needs Accessibility."); exit(1) }
-        guard !locked else { print("The screen is locked: unlock it to run the \(name)."); exit(1) }
+        guard !AwayMonitor.locked else { print("The screen is locked: unlock it to run the \(name)."); exit(1) }
         NSApplication.shared.setActivationPolicy(.accessory)
-        Task { do { try await body() } catch { check("setup", false, "\(error)") }; if locked { print("The screen was locked meanwhile, so this result means nothing."); exit(1) }; print(failures == 0 ? "\(name) passed" : "\(name): \(failures) failed", skipped == 0 ? "" : "(\(skipped) skipped)"); exit(Int32(min(failures, 100))) }
+        Task { do { try await body() } catch { check("setup", false, "\(error)") }; if AwayMonitor.locked { print("The screen was locked meanwhile, so this result means nothing."); exit(1) }; print(failures == 0 ? "\(name) passed" : "\(name): \(failures) failed", skipped == 0 ? "" : "(\(skipped) skipped)"); exit(Int32(min(failures, 100))) }
         NSApplication.shared.run(); exit(1)
     }
     /// Another copy of this program, which ends when its standard input does.
@@ -47,19 +45,25 @@ import MnomeSupport
         }
         func frame(_ name: String) -> CGRect? { ids[name].flatMap { Live.frame(pid, $0) } }
         /// A window opened after the start; macOS reports its number on standard output.
-        func open(_ name: String) { tell("open \(name)"); let line = String(decoding: output.fileHandleForReading.availableData, as: UTF8.self); ids[name] = UInt64(line.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        func open(_ name: String, at place: String = "") { tell("open \(name) \(place)"); let line = String(decoding: output.fileHandleForReading.availableData, as: UTF8.self); ids[name] = UInt64(line.trimmingCharacters(in: .whitespacesAndNewlines)) }
     }
 }
 
 /// Throwaway windows in their own process. Commands arrive on standard input.
 @MainActor enum EngineWindows {
     static let colours: [String: NSColor] = ["one": .red, "two": .green, "fixed": .blue, "stubborn": .magenta]
+    /// Goes back to where it was whenever moved, until a time: as an app busy animating.
+    private final class Clinging: NSObject, NSWindowDelegate {
+        let place: NSPoint, until: Date
+        init(_ place: NSPoint, _ seconds: Double) { self.place = place; until = Date().addingTimeInterval(seconds) }
+        func windowDidMove(_ note: Notification) { guard Date() < until, let w = note.object as? NSWindow, w.frame.origin != place else { return }; DispatchQueue.main.async { w.setFrameOrigin(self.place) } }
+    }
     private final class Stubborn: NSObject, NSWindowDelegate {
         func windowDidMove(_ note: Notification) { guard let w = note.object as? NSWindow, let v = NSScreen.screens.first?.visibleFrame, !v.contains(w.frame) else { return }; DispatchQueue.main.async { w.setFrameOrigin(NSPoint(x: v.midX - 200, y: v.midY - 150)) } }
     }
     static func run() -> Never {
-        let app = NSApplication.shared; app.setActivationPolicy(.accessory)
-        let stubborn = Stubborn(); var windows: [String: NSWindow] = [:]
+        let app = NSApplication.shared; app.setActivationPolicy(.regular) // as ordinary apps, which macOS can hide
+        let stubborn = Stubborn(); var windows: [String: NSWindow] = [:]; nonisolated(unsafe) var clinging: Clinging? // main thread only
         func make(_ title: String, _ i: Int) {
             let w = NSWindow(contentRect: NSRect(x: 200 + i * 60, y: 200 + i * 40, width: 420, height: 280), styleMask: title == "fixed" ? [.titled, .closable, .miniaturizable] : [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             w.title = "Mnome engine check"; w.isReleasedWhenClosed = false; w.backgroundColor = colours[title] ?? .gray; w.collectionBehavior = .fullScreenPrimary; if title == "stubborn" { w.delegate = stubborn } // all share one title on purpose
@@ -68,7 +72,11 @@ import MnomeSupport
         for (i, title) in ["one", "two", "fixed", "stubborn"].enumerated() { make(title, i) }
         print(["one", "two", "fixed", "stubborn"].map { "\($0)=\(windows[$0]!.windowNumber)" }.joined(separator: " ")); fflush(stdout)
         Thread.detachNewThread { while let line = readLine() { let parts = line.split(separator: " ").map(String.init); DispatchQueue.main.async { MainActor.assumeIsolated { switch parts[0] {
-            case "open": make(parts[1], 5); print(windows[parts[1]]!.windowNumber); fflush(stdout)
+            case "open": make(parts[1], 5); if parts.count > 3 { windows[parts[1]]!.setFrameOrigin(NSPoint(x: Double(parts[2])!, y: Double(parts[3])!)) }; print(windows[parts[1]]!.windowNumber); fflush(stdout)
+            case "cling": if let w = windows[parts[1]] { clinging = Clinging(w.frame.origin, Double(parts[2])!); w.delegate = clinging }
+            case "reopen": app.activate(); windows[parts[1]]?.makeKeyAndOrderFront(nil)
+            case "hide": app.hide(nil)
+            case "unhide": app.unhideWithoutActivation()
             case "panel": let p = NSPanel(contentRect: NSRect(x: 500, y: 500, width: 240, height: 120), styleMask: [.titled, .utilityWindow, .nonactivatingPanel], backing: .buffered, defer: false); p.isReleasedWhenClosed = false; p.orderFrontRegardless(); windows["panel"] = p
             case "close": windows[parts[1]]?.close()
             case "minimize": windows[parts[1]]?.miniaturize(nil)

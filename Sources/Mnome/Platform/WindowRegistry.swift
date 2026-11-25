@@ -2,8 +2,8 @@ import AppKit
 import ApplicationServices
 
 struct WindowReading { let ref: AXUIElement, number: CGWindowID?, frame: CGRect, minimized: Bool, fullscreen: Bool }
-struct TrackedWindow { let id: UInt64, pid: pid_t, app: String; var ref: AXUIElement, frame: CGRect, minimized: Bool, fullscreen: Bool }
-enum RegistryEvent { case opened(TrackedWindow), closed(UInt64), moved(UInt64, CGRect), minimized(UInt64, Bool), fullscreen(UInt64, Bool), focused(UInt64) }
+struct TrackedWindow { let id: UInt64, pid: pid_t, app: String; var ref: AXUIElement, frame: CGRect, minimized: Bool, fullscreen: Bool; /* opened while we watched */ let fresh: Bool }
+enum RegistryEvent { case opened(TrackedWindow), closed(UInt64, appEnded: Bool), moved(UInt64, CGRect), minimized(UInt64, Bool), hidden(UInt64, Bool), fullscreen(UInt64, Bool), focused(UInt64) }
 
 /// One app's observer.
 private final class Watcher: @unchecked Sendable {
@@ -55,10 +55,14 @@ private final class Watcher: @unchecked Sendable {
     private var watchers: [pid_t: Watcher] = [:], order: [pid_t: [UInt64]] = [:]
     private var rescans: [pid_t: Task<Void, Never>] = [:], refreshes: [UInt64: Task<Void, Never>] = [:]
     private var observers: [NSObjectProtocol] = [], sweep: Timer?, nextID = WindowRegistry.firstMadeUpID, running = false
+    private var alreadyRunning: Set<pid_t> = [] // apps from before us, until their first scan
+    let away = AwayMonitor()
     private let client = AXClient.shared
 
     func start() {
         guard !running else { return }; running = true
+        alreadyRunning = Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
+        away.start()
         let center = NSWorkspace.shared.notificationCenter
         func on(_ name: Notification.Name, _ body: @escaping @MainActor (NSRunningApplication?) -> Void) {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { note in let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication; MainActor.assumeIsolated { body(app) } })
@@ -66,14 +70,15 @@ private final class Watcher: @unchecked Sendable {
         on(NSWorkspace.didLaunchApplicationNotification) { [weak self] app in if let app { self?.attach(app) } }
         on(NSWorkspace.didTerminateApplicationNotification) { [weak self] app in if let app { self?.detach(app.processIdentifier) } }
         on(NSWorkspace.didActivateApplicationNotification) { [weak self] app in if let app { self?.attach(app); self?.readFocus(app.processIdentifier) } }
+        on(NSWorkspace.didHideApplicationNotification) { [weak self] app in if let app { self?.hid(app.processIdentifier, true) } }
+        on(NSWorkspace.didUnhideApplicationNotification) { [weak self] app in if let app { self?.hid(app.processIdentifier, false) } }
         on(NSWorkspace.activeSpaceDidChangeNotification) { [weak self] _ in self?.rescanAll() }
-        on(NSWorkspace.didWakeNotification) { [weak self] _ in self?.rescanAll() }
         sweep = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.rescanAll() } }
         sweep?.tolerance = 5
         NSWorkspace.shared.runningApplications.forEach(attach)
     }
     func stop() {
-        running = false; sweep?.invalidate(); sweep = nil
+        running = false; away.stop(); sweep?.invalidate(); sweep = nil
         observers.forEach(NSWorkspace.shared.notificationCenter.removeObserver); observers = []
         rescans.values.forEach { $0.cancel() }; refreshes.values.forEach { $0.cancel() }; rescans = [:]; refreshes = [:]
         watchers.values.forEach { $0.stop() }; watchers = [:]
@@ -96,13 +101,14 @@ private final class Watcher: @unchecked Sendable {
     }
     private func detach(_ pid: pid_t) {
         watchers.removeValue(forKey: pid)?.stop(); rescans.removeValue(forKey: pid)?.cancel()
-        for id in order[pid] ?? [] where windows[id]?.pid == pid { remove(id) }
+        for id in order[pid] ?? [] where windows[id]?.pid == pid { remove(id, appEnded: true) }
         order[pid] = nil; client.forget(pid)
     }
-    private func rescanAll() { NSWorkspace.shared.runningApplications.forEach(attach); watchers.keys.forEach { rescan($0) } }
+    private func hid(_ pid: pid_t, _ on: Bool) { for id in order[pid] ?? [] { onEvent(.hidden(id, on)) } }
+    func rescanAll() { NSWorkspace.shared.runningApplications.forEach(attach); watchers.keys.forEach { rescan($0) } }
 
     private func handle(_ pid: pid_t, _ name: String, _ element: AXUIElement) {
-        guard watchers[pid] != nil else { return }
+        guard watchers[pid] != nil, !away.isAway else { return }
         switch name {
         case "AXWindowCreated": rescan(pid)
         case "AXUIElementDestroyed": if let id = id(pid, element) { remove(id) }
@@ -129,7 +135,7 @@ private final class Watcher: @unchecked Sendable {
             // One window failing to answer says nothing about the others.
             guard let watcher = watchers[pid] else { return }
             let result = await client.run(pid) { try Self.list(pid).compactMap { ref -> WindowReading? in do { return try Self.read(ref) } catch AXFailure.hung { throw AXFailure.hung } catch { return nil } } }
-            guard watchers[pid] === watcher else { return }
+            guard watchers[pid] === watcher, !away.mustNotTrust else { return } // seen again when the person is back
             if case let .success(found) = result { await merge(watcher, found) } else if retries > 0 { rescan(pid, after: .seconds(2), retries: retries - 1) } // or wait for the sweep
         }
     }
@@ -140,13 +146,14 @@ private final class Watcher: @unchecked Sendable {
             guard watchers[pid] === watcher else { return } // the app ended while we were waiting
             if let id = id(pid, reading.ref) ?? reading.number.map(UInt64.init).flatMap({ windows[$0]?.pid == pid ? $0 : nil }) { seen.insert(id); apply(id, reading); continue }
             let id = reading.number.map(UInt64.init) ?? { nextID += 1; return nextID }()
-            if windows[id] != nil { remove(id) } // the number was reused; its old owner is gone
+            if windows[id] != nil { remove(id, appEnded: true) } // the number was reused; its old owner is gone
             let app = NSRunningApplication(processIdentifier: pid)
-            let window = TrackedWindow(id: id, pid: pid, app: app?.bundleIdentifier ?? app?.bundleURL?.path ?? "pid.\(pid)", ref: reading.ref, frame: reading.frame, minimized: reading.minimized, fullscreen: reading.fullscreen)
+            let window = TrackedWindow(id: id, pid: pid, app: app?.bundleIdentifier ?? app?.bundleURL?.path ?? "pid.\(pid)", ref: reading.ref, frame: reading.frame, minimized: reading.minimized, fullscreen: reading.fullscreen, fresh: !alreadyRunning.contains(pid))
             windows[id] = window; order[pid, default: []].append(id); seen.insert(id)
-            onEvent(.opened(window))
+            onEvent(.opened(window)); if app?.isHidden == true { onEvent(.hidden(id, true)) }
             _ = await client.run(pid) { watcher.watch(reading.ref) }
         }
+        alreadyRunning.remove(pid)
         // Apps leave out windows on other native Spaces, so only a window that itself says it is gone is removed.
         for id in (order[pid] ?? []) where !seen.contains(id) {
             guard watchers[pid] === watcher, let ref = windows[id]?.ref else { continue }
@@ -159,6 +166,7 @@ private final class Watcher: @unchecked Sendable {
             try? await Task.sleep(for: .milliseconds(40)) // coalesces a drag
             guard !Task.isCancelled else { return }
             refreshes[id] = nil
+            guard !away.isAway else { return }
             switch await client.run(window.pid, { try Self.read(window.ref) }) {
             case let .success(reading?): apply(id, reading)
             case .failure(.gone): remove(id)
@@ -173,10 +181,10 @@ private final class Watcher: @unchecked Sendable {
         if old.minimized != reading.minimized { onEvent(.minimized(id, reading.minimized)) }
         if old.frame != reading.frame { onEvent(.moved(id, reading.frame)) }
     }
-    private func remove(_ id: UInt64) {
-        guard let window = windows.removeValue(forKey: id) else { return }
+    private func remove(_ id: UInt64, appEnded: Bool = false) {
+        guard appEnded || !away.mustNotTrust, let window = windows.removeValue(forKey: id) else { return }
         order[window.pid]?.removeAll { $0 == id }; refreshes.removeValue(forKey: id)?.cancel()
-        onEvent(.closed(id))
+        onEvent(.closed(id, appEnded: appEnded))
     }
     /// The window the person is working in, asked fresh: the last one reported may be behind a dialog or panel we do not track.
     func focusedWindow() async -> UInt64? {

@@ -52,6 +52,12 @@ final class RecoveryTests: XCTestCase {
         let seen = live(frame: CGRect(x: 300, y: 300, width: 400, height: 300))
         XCTAssertEqual(steps([record()], [seen]), [.drop(record())])
     }
+    func testAStripIsNotInSightSoItIsStillBroughtBack() {
+        let strip = live(frame: CGRect(x: -390, y: 300, width: 400, height: 300)) // 10 points showing: moved by macOS, not rescued
+        XCTAssertEqual(steps([record()], [strip]), [.restore(record(), strip, original)])
+        XCTAssertTrue(Recovery.inSight(CGRect(x: -360, y: 300, width: 400, height: 300), displays: [main]))
+        XCTAssertFalse(Recovery.inSight(CGRect(x: 0, y: 970, width: 400, height: 300), displays: [main]))
+    }
     func testMissingWindowOfARunningAppIsKept() { XCTAssertEqual(steps([record()], []), [.keep(record())]) } // hung, or on another native Space
     func testEndedAppsRecordIsDropped() { XCTAssertEqual(steps([record()], [], running: [:]), [.drop(record())]) }
     func testJournalHasOneOwnerAndTheNextSeesItsWrites() throws {

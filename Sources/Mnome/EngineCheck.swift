@@ -100,6 +100,8 @@ import MnomeSupport
         m.send(.toWorkspace(two, m.state!.current)); await Live.sleep(0.5); helper.tell("fullscreen two")
         check("and takes it back afterwards", await wait(8) { m.registry.windows[two]?.fullscreen == false && m.state?.window(two)?.fullscreen == false }); await Live.sleep(1.5)
 
+        try await neverLost(m, helper, journal)
+
         kill(helper.pid, SIGSTOP); let t = Date()
         m.send(.snap(one, .right)); let blocked = Date().timeIntervalSince(t)
         try? await Task.sleep(for: .seconds(4))
@@ -145,6 +147,65 @@ import MnomeSupport
         again.stop()
         check("an app that quits while parked is forgotten", await wait { m.state?.windows.isEmpty == true && RecoveryJournal(url: journal).records.isEmpty }, "\(m.state?.windows.count ?? -1) windows, \(RecoveryJournal(url: journal).records.count) records")
         m.shutDown()
+    }
+
+    // Nothing macOS or an app does loses a window
+
+    private static func neverLost(_ m: WindowManager, _ helper: Live.Windows, _ journal: URL) async throws {
+        let displays = WindowManager.displayFrames(), one = helper.ids["one"]!, late = helper.ids["late"]!
+        let parked = { (name: String) in helper.frame(name).map { Parking.isParked($0, displays: displays) } ?? false }
+        let record = { (id: UInt64) in RecoveryJournal(url: journal).records.first { $0.window == id } }
+        let home = m.state!.current, far = { m.state!.workspaces.last! } // empty ones come and go
+        m.send(.restore(one)); await Live.sleep(1); let before = helper.frame("one")!
+
+        // Away: as a locked screen does, without locking it
+        m.send(.toWorkspace(one, far())); _ = await wait { parked("one") && record(one)?.parked != nil }
+        m.registry.away.leave("check"); helper.tell("close late"); helper.tell("close one"); helper.tell("move two 900 200"); await Live.sleep(2)
+        check("while away, nothing is taken for closed", m.state?.window(late) != nil && m.state?.window(one) != nil && record(one)?.original == before)
+        let two = m.state!.window(helper.ids["two"]!)!.rect.cgRect
+        check("and nothing for moved", m.state?.window(helper.ids["two"]!)?.rect.x != 900, "\(two)")
+        m.registry.away.comeBack("check"); m.registry.rescanAll() // as the backup scan may, before Mnome hears it is back
+        check("back, what closed meanwhile is forgotten", await wait { m.state?.window(late) == nil && m.state?.window(one) == nil })
+        check("and what was moved goes back", await wait { near(helper.frame("two"), two) }, "\(String(describing: helper.frame("two"))) want \(two)")
+        check("a parked window closed but kept by its app keeps its record", record(one)?.original == before, "\(RecoveryJournal(url: journal).records)")
+        helper.tell("reopen one")
+        check("and opens again where it was before parking", await wait { near(helper.frame("one"), before) && m.state?.window(one) != nil && record(one) == nil }, "\(String(describing: helper.frame("one"))) want \(before) \(RecoveryJournal(url: journal).records)")
+        helper.tell("reopen late"); _ = await wait { m.state?.window(late) != nil }
+
+        // An app moves its parked window
+        m.send(.toWorkspace(one, far())); _ = await wait { parked("one") }; await Live.sleep(1)
+        helper.tell("move one 300 300"); await Live.sleep(0.4)
+        check("a parked window that comes out is parked again", await wait { parked("one") })
+        check("without forgetting where it belongs", record(one)?.original == before, "\(String(describing: record(one)))")
+        await Live.sleep(1); helper.tell("move one 300 300")
+        check("one that insists stays in sight, where it belongs", await wait { near(helper.frame("one"), before) && m.state?.window(one)?.sticky == true }, "\(String(describing: helper.frame("one"))) want \(before)")
+        m.send(.sticky(one, false))
+
+        // An app that answers but leaves its window in the corner for a while
+        m.send(.toWorkspace(one, far())); _ = await wait { parked("one") && record(one)?.parked != nil }; await Live.sleep(1)
+        helper.tell("cling one 2"); m.send(.setWorkspace(m.state!.window(one)!.workspace))
+        check("a window that stays in the corner is asked again", await wait(15) { near(helper.frame("one"), before) && record(one) == nil }, "\(String(describing: helper.frame("one"))) want \(before)")
+        m.send(.setWorkspace(home)); m.send(.toWorkspace(one, home)); _ = await wait { near(helper.frame("one"), before) }
+
+        // A hung app
+        m.send(.toWorkspace(one, far())); _ = await wait { parked("one") && record(one)?.parked != nil }; await Live.sleep(1)
+        kill(helper.pid, SIGSTOP); m.send(.setWorkspace(m.state!.window(one)!.workspace)); await Live.sleep(6); kill(helper.pid, SIGCONT)
+        check("a window whose app hung comes back by itself", await wait(15) { near(helper.frame("one"), before) && record(one) == nil }, "\(String(describing: helper.frame("one"))) want \(before)")
+        check("and its other windows are parked after all, not shown everywhere", await wait(15) { parked("two") && parked("late") && m.state?.window(helper.ids["two"]!)?.sticky == false }, "\(String(describing: helper.frame("two")))")
+        m.send(.setWorkspace(home)); m.send(.toWorkspace(one, home)); _ = await wait { near(helper.frame("one"), before) }
+
+        // New beside a parked one
+        m.send(.toWorkspace(one, far())); _ = await wait { parked("one") }
+        let corner = helper.frame("one")!; helper.open("astray", at: "\(Int(corner.minX)) \(-380)")
+        check("a window that opens out of sight is brought in", await wait { helper.frame("astray").map { Recovery.inSight($0, displays: displays) && displays[0].contains($0) } ?? false } && !RecoveryJournal(url: journal).records.contains { $0.window == helper.ids["astray"] }, "\(String(describing: helper.frame("astray")))")
+        helper.tell("close astray"); m.send(.toWorkspace(one, home)); _ = await wait { near(helper.frame("one"), before) }
+
+        // Cmd+H
+        helper.tell("hide")
+        check("hidden apps are noticed", await wait { m.state?.window(one)?.hidden == true && m.state?.focus == nil }, "focus \(String(describing: m.state?.focus)) \(m.state?.windows.map { "\($0.id) ws\($0.workspace) hidden \($0.hidden) min \($0.minimized) sticky \($0.sticky)" } ?? []) app hidden \(String(describing: NSRunningApplication(processIdentifier: helper.pid)?.isHidden))")
+        m.send(.setWorkspace(far())); await Live.sleep(0.5); helper.tell("unhide")
+        check("and join their workspace when shown again", await wait { m.state?.window(one)?.hidden == false && parked("one") }, "\(String(describing: helper.frame("one")))")
+        m.send(.setWorkspace(home)); _ = await wait { near(helper.frame("one"), before) }; await Live.sleep(1)
     }
 
     // Real apps, as fresh copies with settings of their own where the app allows it

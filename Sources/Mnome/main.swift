@@ -93,6 +93,7 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
     let osd = OSD()
     let model = Model(), overview = OverviewController(); var status: NSStatusItem!; var hotkey: EventHotKeyRef?
     func applicationDidFinishLaunching(_ notification: Notification) {
+        quitOnSignals()
         NSApp.setActivationPolicy(.accessory); model.shortcutTitle = UserDefaults.standard.string(forKey: "shortcutTitle") ?? "Control–Option–Space"; model.discover()
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let url = Bundle.main.url(forResource: "Mnome", withExtension: "icns"), let appIcon = NSImage(contentsOf: url) {
@@ -201,7 +202,16 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
         if result == noErr { UserDefaults.standard.set(choice.mask, forKey: "shortcutModifiers"); UserDefaults.standard.set(choice.title, forKey: "shortcutTitle"); model.shortcutTitle = choice.title }
         else { RegisterEventHotKey(UInt32(kVK_Space), UInt32(previous.mask), EventHotKeyID(signature: 0x4d4e4f4d, id: 1), GetApplicationEventTarget(), 0, &hotkey); let alert = NSAlert(); alert.messageText = "Shortcut unavailable"; alert.informativeText = "Choose another shortcut from Quick Settings."; alert.runModal() }
     }
-    func applicationWillTerminate(_ notification: Notification) { windowManager.shutDown(); topBar.stop(); dock.stop(); macChrome.restoreAll(quitting: true) }
+    func applicationWillTerminate(_ notification: Notification) { windowManager.shutDown(); topBar.stop(); dock.stop(); OverviewController.restoreDockAfterCrash(); macChrome.restoreAll(quitting: true) }
+    /// `kill`, Ctrl+C and a closing terminal quit the ordinary way, so windows and the Mac's settings come back.
+    private var signals: [DispatchSourceSignal] = []
+    func quitOnSignals() {
+        for number in [SIGTERM, SIGINT, SIGHUP] {
+            signal(number, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
+            source.setEventHandler { NSApp.terminate(nil) }; source.resume(); signals.append(source)
+        }
+    }
     /// Window control needs Accessibility. Asked for once; after that it starts as soon as it is granted.
     func startWindowManager() {
         if AXIsProcessTrusted() { windowManager.start(); dragTiler = dragTiler ?? DragTiler(windowManager); startHotCorner(); startGestures(); startShortcuts(); return }
@@ -375,8 +385,8 @@ MainActor.assumeIsolated {
     print("Mnome permissions: accessibility \(AXIsProcessTrusted()) screen-recording \(CGPreflightScreenCaptureAccess())"); exit(0)
  }
  if CommandLine.arguments.contains("--rescue") {
-    guard AXIsProcessTrusted() else { print("Mnome needs Accessibility to move windows."); exit(1) }
-    if NSRunningApplication.runningApplications(withBundleIdentifier: "dev.mnome.shell").allSatisfy({ $0.processIdentifier == getpid() }) { MacChromeController().restoreAll(quitting: true); OverviewController.restoreDockAfterCrash() } // a crash leaves the menu bar and Dock hidden
+    if NSRunningApplication.runningApplications(withBundleIdentifier: "dev.mnome.shell").allSatisfy({ $0.processIdentifier == getpid() }) { OverviewController.restoreDockAfterCrash(); MacChromeController().restoreAll(quitting: true) } // a crash leaves the menu bar and Dock hidden; that needs no Accessibility
+    guard AXIsProcessTrusted() else { print("Mac settings are back. Mnome needs Accessibility to move windows."); exit(1) }
     let given = CommandLine.arguments.firstIndex(of: "--rescue").flatMap { CommandLine.arguments.indices.contains($0 + 1) ? URL(fileURLWithPath: CommandLine.arguments[$0 + 1]) : nil } // a check's own file: only its windows
     let journal = RecoveryJournal(url: given ?? WindowManager.defaultJournal)
     guard journal.acquire() else { print("Mnome is running: use Bring Back All Windows in its menu."); exit(1) }

@@ -316,8 +316,13 @@ enum RecoveryRunner {
         }
         return (windows, unreadable)
     }
+    /// One window closing or refusing says nothing about the others; only an app that hangs is unreadable as a whole.
     private static func read(_ pid: pid_t, _ bundle: String, _ started: Double) throws -> [Found] {
-        try WindowRegistry.list(pid).compactMap { ref in try WindowRegistry.read(ref).map { Found(window: LiveWindow(pid: pid, started: started, bundle: bundle, window: $0.number.map(UInt64.init) ?? 0, frame: $0.frame), ref: ref, plain: !$0.minimized && !$0.fullscreen) } }
+        try WindowRegistry.list(pid).compactMap { ref in
+            let reading: WindowReading?
+            do { reading = try WindowRegistry.read(ref) } catch AXFailure.hung { throw AXFailure.hung } catch { return nil }
+            return reading.map { Found(window: LiveWindow(pid: pid, started: started, bundle: bundle, window: $0.number.map(UInt64.init) ?? 0, frame: $0.frame), ref: ref, plain: !$0.minimized && !$0.fullscreen) }
+        }
     }
     private static func running(_ records: [ParkedRecord]) -> [Int32: Double] { records.reduce(into: [:]) { $0[$1.pid] = ProcessIdentity.started($1.pid) } }
     private static func apps(for records: [ParkedRecord]) -> [NSRunningApplication] { NSWorkspace.shared.runningApplications.filter { app in records.contains { $0.pid == app.processIdentifier || $0.bundle == app.bundleIdentifier } } }
@@ -331,10 +336,11 @@ enum RecoveryRunner {
         for case let .center(window, frame) in steps where !(await put(window, frame, windows, displays)) { failed += 1; stuck.insert(window.bundle) }
         for step in steps {
             switch step {
-            case let .drop(record): if !stuck.contains(record.bundle) { try? journal.remove(record) } // its window may still be in the corner
+            case let .drop(record): if !stuck.contains(record.bundle), journal.records.contains(record) { try? journal.remove(record) } // its window may still be in the corner
             case let .keep(record): if unreadable.contains(record.pid) { failed += 1 } // otherwise on another Space, or closed
             case let .restore(record, window, frame):
-                if await put(window, frame, windows, displays) { try? journal.remove(record) } else { failed += 1 }
+                // Only the record read at the start: a park meanwhile wrote a new one, which must stay.
+                if await put(window, frame, windows, displays) { if journal.records.contains(record) { try? journal.remove(record) } } else { failed += 1 }
             case .center: break
             }
         }
@@ -363,10 +369,10 @@ enum RecoveryRunner {
             guard let started = ProcessIdentity.started(pid), abs(started - mine[0].started) < 1 else { continue } // sorted out at the next launch
             AXClient.shared.run(pid, in: group) {
                 let found = try read(pid, mine[0].bundle, started), steps = Recovery.steps(records: mine, live: found.map(\.window), running: [pid: started], displays: displays, main: main)
-                let back = { (window: LiveWindow, frame: CGRect) in try found.first { $0.window == window }.map { Recovery.inSight(try $0.ref.place(frame), displays: displays) } ?? false }
+                let back = { (window: LiveWindow, frame: CGRect) in found.first { $0.window == window }.flatMap { try? $0.ref.place(frame) }.map { Recovery.inSight($0, displays: displays) } ?? false } // one refusing window does not stop the others
                 for step in steps {
                     switch step {
-                    case let .restore(record, window, frame): if try back(window, frame) { lock.withLock { done.append(record) } }
+                    case let .restore(record, window, frame): if back(window, frame) { lock.withLock { done.append(record) } }
                     case let .drop(record): lock.withLock { done.append(record) }
                     case .center, .keep: break
                     }

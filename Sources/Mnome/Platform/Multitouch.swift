@@ -38,7 +38,8 @@ final class Multitouch: @unchecked Sendable {
     @discardableResult func start(_ handler: @escaping @Sendable (Int, CGPoint, Double) -> Void) -> Int {
         stop()
         guard Self.missing.isEmpty, let createList = Self.createList, let register = Self.register, let startDevice = Self.startDevice, let list = createList()?.takeRetainedValue() else { return 0 }
-        Self.handler = handler; self.list = list
+        if Self.handler == nil { Self.handler = handler } // set once: a callback may be reading it on the framework's thread
+        self.list = list
         for i in 0..<CFArrayGetCount(list) {
             guard let device = CFArrayGetValueAtIndex(list, i) else { continue }
             let pointer = UnsafeMutableRawPointer(mutating: device)

@@ -40,7 +40,7 @@ import ApplicationServices
                 }
             }
             guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return } // another app came in front meanwhile
-            let found = (try? read.get()) ?? []
+            guard case let .success(found) = read else { return } // a slow answer keeps the titles there are
             elements = found.map(\.0)
             let bar = Bar(pid: pid, items: found.map(\.1))
             if status.appMenus != bar { status.appMenus = bar }
@@ -55,12 +55,17 @@ import ApplicationServices
         if let last = lastPress, last.index == index, Date().timeIntervalSince(last.at) < 0.4 { return }
         lastPress = (index, Date()); pressing = true
         let element = elements[index]
+        // Not on the app's lane: a press can wait while the menu is open, and a wait there would mark the app as hung.
         Task {
-            let done = await AXClient.shared.run(pid, urgent: true) {
-                if try element.flag("AXSelected"), let menu = (try element.value("AXChildren") as? [AXUIElement])?.first { try menu.perform("AXCancel") } else { try element.perform("AXPress") }
-            }
+            let gone = await Task.detached { () -> Bool in
+                var selected: CFTypeRef?
+                if AXUIElementCopyAttributeValue(element, "AXSelected" as CFString, &selected) == .invalidUIElement { return true }
+                var children: CFTypeRef?
+                if (selected as? Bool) == true, AXUIElementCopyAttributeValue(element, "AXChildren" as CFString, &children) == .success, let menu = (children as? [AXUIElement])?.first { AXUIElementPerformAction(menu, "AXCancel" as CFString); return false }
+                return AXUIElementPerformAction(element, "AXPress" as CFString) == .invalidUIElement
+            }.value
             pressing = false
-            if case .failure = done { read() } // the app rebuilt its menus
+            if gone { read() } // the app rebuilt its menus
         }
     }
 }

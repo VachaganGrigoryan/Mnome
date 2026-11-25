@@ -13,7 +13,7 @@ import ScreenCaptureKit
         fileprivate let element: AXUIElement, pid: pid_t, pressable: Bool
     }
     private let status: BarStatus
-    private var timer: Timer?, observers: [NSObjectProtocol] = [], owners: [pid_t] = [], busy = false
+    private var timer: Timer?, observers: [NSObjectProtocol] = [], owners: [pid_t] = [], busy = false, ticks = 0
     private var lastPress: (id: Int, at: Date)? // one press per click, however the pointer moves while it is down
     init(status: BarStatus) { self.status = status }
 
@@ -21,7 +21,10 @@ import ScreenCaptureKit
         guard timer == nil else { return }
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
-            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.owners = []; self?.refresh() } })
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated {
+                self?.owners = []; self?.refresh()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self?.owners = [] } // an app adds its icon a moment after it launches
+            } })
         }
         // shortcut: a capture every 2 seconds, so an icon that changes (a timer, a sync spinner) lags up to that; a stream would follow it live.
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.refresh() } }
@@ -44,15 +47,18 @@ import ScreenCaptureKit
     }
 
     private func refresh() {
-        guard !busy, AXIsProcessTrusted(), CGPreflightScreenCaptureAccess() else { if status.appIcons.count > 0 { status.appIcons = [] }; return }
-        busy = true
+        guard !busy else { return } // the scan under way shows them
+        guard AXIsProcessTrusted(), CGPreflightScreenCaptureAccess() else { if !status.appIcons.isEmpty { status.appIcons = [] }; return }
+        busy = true; ticks += 1
+        if ticks % 15 == 0 { owners = [] } // every 30 seconds every app: one may add its icon long after it launched
+        let full = owners.isEmpty
         // MenuBarAgent is not always among the running apps an app is told of; its bar window always has its number.
         let agent = (CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]])?.first { $0[kCGWindowOwnerName as String] as? String == "MenuBarAgent" && $0[kCGWindowLayer as String] as? Int == 24 }?[kCGWindowOwnerPID as String] as? pid_t
-        let scan = Array(Set((owners.isEmpty ? NSWorkspace.shared.runningApplications.map(\.processIdentifier) : owners) + (agent.map { [$0] } ?? []))), me = getpid()
+        let scan = Array(Set((full ? NSWorkspace.shared.runningApplications.map(\.processIdentifier) : owners) + (agent.map { [$0] } ?? []))), me = getpid()
         Task {
             defer { busy = false }
             let found = await Task.detached { Self.items(scan.filter { $0 != me }) }.value
-            owners = Array(Set(found.map(\.pid)))
+            if full || !owners.isEmpty { owners = Array(Set(found.map(\.pid))) } // a launch meanwhile asked for every app: keep that
             let system = found.filter { $0.pid == agent }.sorted { $0.frame.minX < $1.frame.minX }.suffix(2).map(\.frame) // Control Center and the clock
             guard let clock = system.last else { if !status.appIcons.isEmpty { status.appIcons = [] }; return }
             let shown = found.filter { !system.contains($0.frame) }.sorted { $0.frame.minX < $1.frame.minX }

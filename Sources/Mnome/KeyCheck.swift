@@ -6,7 +6,8 @@ import MnomeSupport
 @MainActor enum KeyCheck {
     private static var mnome: pid_t? { NSRunningApplication.runningApplications(withBundleIdentifier: "dev.mnome.shell").first?.processIdentifier }
     private static func listed() -> [[String: Any]] { CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? [] }
-    private static var overview: Bool { listed().contains { $0[kCGWindowOwnerPID as String] as? Int32 == mnome && (($0[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }?.height ?? 0) > 500 } }
+    /// A tall Mnome window above the desktop: Mnome's own desktop, at the desktop's level, is not one.
+    private static var overview: Bool { listed().contains { $0[kCGWindowOwnerPID as String] as? Int32 == mnome && ($0[kCGWindowLayer as String] as? Int ?? 0) >= 0 && (($0[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }?.height ?? 0) > 500 } }
     private static func frame(_ pid: pid_t) -> CGRect { (try? WindowRegistry.list(pid))?.first.flatMap { try? $0.frame() } ?? .null }
 
     static func run() -> Never { Live.run("key check") {

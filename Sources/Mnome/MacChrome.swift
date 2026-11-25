@@ -34,9 +34,14 @@ struct CFPreferencesStore: PreferenceStore {
     var needsRestore: Bool { !snapshot.needsRestore.isEmpty }
     private let store = CFPreferencesStore()
     private static let defaultsKey = "macChromeSnapshot"
+    /// A saved snapshot this build cannot read (one from a newer Mnome): it is set aside, and nothing is hidden, so
+    /// the originals in it are never replaced by values Mnome itself changed.
+    private let unreadable: Bool
     init() {
-        let saved = UserDefaults.standard.data(forKey: Self.defaultsKey).flatMap { try? JSONDecoder().decode(MacChromeSnapshot.self, from: $0) } ?? MacChromeSnapshot()
-        snapshot = saved; hidden = saved.hidden
+        let data = UserDefaults.standard.data(forKey: Self.defaultsKey), saved = data.flatMap { try? JSONDecoder().decode(MacChromeSnapshot.self, from: $0) }
+        unreadable = data != nil && saved == nil
+        if unreadable, let data { UserDefaults.standard.set(data, forKey: Self.defaultsKey + ".unreadable"); NSLog("Mnome: saved Mac settings unreadable, set aside; nothing is hidden") }
+        snapshot = saved ?? MacChromeSnapshot(); hidden = snapshot.hidden
     }
     var summary: String { hidden.isEmpty ? "Visible" : hidden.count == MacElement.allCases.count ? "Hidden" : "Partly hidden" }
     /// What the person wants hidden while Mnome runs; Mnome's own bar and dock take the place of these two.
@@ -53,7 +58,8 @@ struct CFPreferencesStore: PreferenceStore {
         hide(chosen.subtracting(hidden), restartDock: tile)
     }
     private func hide(_ elements: Set<MacElement>, restartDock: Bool = false) {
-        guard !elements.isEmpty || restartDock else { return }
+        guard !elements.isEmpty || restartDock, !unreadable else { return }
+        if elements.contains(.dock) { OverviewController.restoreDockAfterCrash() } // the overview's revealed Dock is not the person's setting
         for element in elements { snapshot.capture(element, store: store) }; persist() // originals are on disk before anything is changed
         for element in elements { snapshot.hide(element, store: store) }
         finish(Array(elements), restartDock: restartDock)

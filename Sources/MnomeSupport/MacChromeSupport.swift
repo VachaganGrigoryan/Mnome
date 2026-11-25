@@ -22,6 +22,8 @@ public enum MacElement: String, CaseIterable, Codable {
         }
     }
     public struct Setting { public let domain: String, key: String, hidden: PrefValue }
+    /// Marks a domain's per-Mac layer.
+    public static let currentHost = "@currentHost"
     /// The process that reads these settings and must restart to see them.
     public var owner: String? {
         switch self { case .dock, .missionControl, .hotCorners, .animations: "Dock"; case .desktop: "Finder"; case .stageManager, .tiling: "WindowManager"; case .menuBar: nil }
@@ -39,6 +41,8 @@ public enum MacElement: String, CaseIterable, Codable {
             + ["showMissionControlGestureEnabled", "showAppExposeGestureEnabled", "showDesktopGestureEnabled", "showLaunchpadGestureEnabled"].map { Setting(domain: "com.apple.dock", key: $0, hidden: .bool(false)) }
             // The Mac's own three-finger swipes (between full-screen apps, Mission Control) would run beside Mnome's. 0 is off.
             + ["com.apple.AppleMultitouchTrackpad", "com.apple.driver.AppleBluetoothMultitouch.trackpad"].flatMap { domain in ["TrackpadThreeFingerHorizSwipeGesture", "TrackpadThreeFingerVertSwipeGesture"].map { Setting(domain: domain, key: $0, hidden: .int(0)) } }
+            // The same choice as System Settings keeps it, per Mac; the Dock acts on this one.
+            + ["com.apple.trackpad.threeFingerHorizSwipeGesture", "com.apple.trackpad.threeFingerVertSwipeGesture"].map { Setting(domain: "NSGlobalDomain" + MacElement.currentHost, key: $0, hidden: .int(0)) }
         case .hotCorners: ["tl", "tr", "bl", "br"].map { Setting(domain: "com.apple.dock", key: "wvous-\($0)-corner", hidden: .int(1)) } // 1 is "no action"
         case .animations: [Setting(domain: "NSGlobalDomain", key: "NSAutomaticWindowAnimationsEnabled", hidden: .bool(false)), Setting(domain: "NSGlobalDomain", key: "NSWindowResizeTime", hidden: .double(0.001)),
                            Setting(domain: "com.apple.dock", key: "launchanim", hidden: .bool(false)), Setting(domain: "com.apple.dock", key: "expose-animation-duration", hidden: .double(0.001))]

@@ -23,7 +23,11 @@ import MnomeSupport
     init(overview: OverviewController, slide: WorkspaceSlide, manager: WindowManager) { self.overview = overview; self.slide = slide; self.manager = manager }
 
     func start() {
-        trackpads = touch.start { count, centroid, time in DispatchQueue.main.async { MainActor.assumeIsolated { self.frame(count, centroid, time) } } }
+        let latest = Latest()
+        trackpads = touch.start { count, centroid, time in
+            guard latest.put((count, centroid, time)) else { return } // already on its way: the main thread takes the newest only
+            DispatchQueue.main.async { MainActor.assumeIsolated { if let (count, centroid, time) = latest.take() { self.frame(count, centroid, time) } } }
+        }
         if !Multitouch.missing.isEmpty { NSLog("Mnome: no trackpad gestures, this macOS lacks %@", Multitouch.missing.joined(separator: ", ")) }
         wake = wake ?? NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.start() } }
     }
@@ -65,7 +69,7 @@ import MnomeSupport
             let ready = await slide.prepare(target)
             guard case let .workspace(event, direction, _) = mode else { if ready { await slide.finish() }; return } // let go meanwhile: `end` waits for this
             mode = ready ? .workspace(event: event, direction: direction, ready: true) : .step(commit: { [weak self] in self?.send(event) }, sign: -direction)
-            if ready { await slide.move(to: slideProgress(direction), duration: 0) }
+            if ready { slide.set(slideProgress(direction)) }
         }
     }
     private var axis: SwipeTracker.Axis = .horizontal
@@ -75,7 +79,7 @@ import MnomeSupport
     private func follow(_ p: CGFloat) {
         switch mode {
         case let .overview(from): overview.follow(from + p)
-        case let .workspace(_, direction, true): Task { await slide.move(to: slideProgress(direction), duration: 0) }
+        case let .workspace(_, direction, true): slide.set(slideProgress(direction))
         default: break
         }
     }
@@ -95,4 +99,12 @@ import MnomeSupport
         case .idle, .ignored: break
         }
     }
+}
+/// The newest trackpad frame, handed from the framework's thread to the main one. A busy main thread skips frames
+/// instead of working through a backlog, so the content never lags behind the fingers.
+private final class Latest: @unchecked Sendable {
+    private let lock = NSLock(); private var frame: (Int, CGPoint, Double)?
+    /// True when nothing was waiting, so the main thread must be asked.
+    func put(_ new: (Int, CGPoint, Double)) -> Bool { lock.withLock { defer { frame = new }; return frame == nil } }
+    func take() -> (Int, CGPoint, Double)? { lock.withLock { defer { frame = nil }; return frame } }
 }

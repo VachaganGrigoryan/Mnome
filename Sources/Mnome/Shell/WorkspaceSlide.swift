@@ -44,13 +44,17 @@ import ScreenCaptureKit
     /// 0 shows the workspace being left, 1 the one to come.
     func move(to progress: CGFloat, duration: TimeInterval) async {
         let x = -direction * progress * strip.bounds.width
-        guard duration > 0 else { CATransaction.begin(); CATransaction.setDisableActions(true); strip.sublayerTransform = CATransform3DMakeTranslation(x, 0, 0); CATransaction.commit(); return }
+        guard duration > 0 else { set(progress); return }
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
             CATransaction.begin(); CATransaction.setAnimationDuration(duration); CATransaction.setAnimationTimingFunction(.workspace)
             CATransaction.setCompletionBlock { done.resume() }
             strip.sublayerTransform = CATransform3DMakeTranslation(x, 0, 0)
             CATransaction.commit()
         }
+    }
+    /// At once, for fingers on the trackpad.
+    func set(_ progress: CGFloat) {
+        CATransaction.begin(); CATransaction.setDisableActions(true); strip.sublayerTransform = CATransform3DMakeTranslation(-direction * progress * strip.bounds.width, 0, 0); CATransaction.commit()
     }
     /// Once nothing underneath is moving any more; fresh pictures for next time.
     func finish() async {

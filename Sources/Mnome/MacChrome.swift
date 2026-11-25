@@ -2,9 +2,12 @@ import AppKit
 import MnomeSupport
 
 struct CFPreferencesStore: PreferenceStore {
-    private func application(_ domain: String) -> CFString { domain == "NSGlobalDomain" ? kCFPreferencesAnyApplication : domain as CFString }
+    /// "domain@currentHost" is the per-Mac layer (`defaults -currentHost`), where System Settings keeps the trackpad's gestures.
+    private func application(_ domain: String) -> CFString { let name = Self.name(domain); return name == "NSGlobalDomain" ? kCFPreferencesAnyApplication : name as CFString }
+    private static func name(_ domain: String) -> String { domain.hasSuffix(MacElement.currentHost) ? String(domain.dropLast(MacElement.currentHost.count)) : domain }
+    private func host(_ domain: String) -> CFString { domain.hasSuffix(MacElement.currentHost) ? kCFPreferencesCurrentHost : kCFPreferencesAnyHost }
     func get(_ domain: String, _ key: String) -> PrefValue {
-        guard let value = CFPreferencesCopyValue(key as CFString, application(domain), kCFPreferencesCurrentUser, kCFPreferencesAnyHost) else { return .absent }
+        guard let value = CFPreferencesCopyValue(key as CFString, application(domain), kCFPreferencesCurrentUser, host(domain)) else { return .absent }
         if CFGetTypeID(value) == CFBooleanGetTypeID() { return .bool(CFBooleanGetValue((value as! CFBoolean))) }
         if let number = value as? NSNumber { return CFNumberIsFloatType(number) ? .double(number.doubleValue) : .int(number.intValue) }
         if let string = value as? String { return .string(string) }
@@ -18,8 +21,8 @@ struct CFPreferencesStore: PreferenceStore {
         case .string(let v): v as CFString
         case .absent: nil
         }
-        CFPreferencesSetValue(key as CFString, stored, application(domain), kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
-        CFPreferencesSynchronize(application(domain), kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
+        CFPreferencesSetValue(key as CFString, stored, application(domain), kCFPreferencesCurrentUser, host(domain))
+        CFPreferencesSynchronize(application(domain), kCFPreferencesCurrentUser, host(domain))
     }
 }
 

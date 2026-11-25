@@ -7,7 +7,7 @@ import MnomeSupport
     private let manager: WindowManager
     private let preview = TilePreviewPanel()
     private var monitor: Any?
-    private var down: CGPoint?, window: UInt64?, zone: WMSnap?, border: WMBorder?, lastBorder = Date.distantPast
+    private var down: CGPoint?, window: UInt64?, zone: WMSnap?, border: WMBorder?, lastBorder = Date.distantPast, lastZone = Date.distantPast
     private var dropped: (id: UInt64, until: Date)? // the drop's own late move report, which would undo the tile
     static var enabled: Bool { UserDefaults.standard.object(forKey: "edgeTiling") as? Bool ?? true }
 
@@ -31,10 +31,11 @@ import MnomeSupport
             border = manager.hit(p)?.border.flatMap { onTileEdge($0, p) ? $0 : nil }
         case .leftMouseDragged:
             if let border, Date().timeIntervalSince(lastBorder) > 1.0 / 60 { lastBorder = Date(); manager.send(.dragBorder(border, coordinate: Int((border.vertical ? p.x : p.y).rounded()))) }
-            else if window != nil { track(p) }
+            else if window != nil, Date().timeIntervalSince(lastZone) > 1.0 / 30 { lastZone = Date(); track(p) } // asking the core costs a copy of all its state
         case .leftMouseUp:
             if let border { manager.send(.dragBorder(border, coordinate: Int((border.vertical ? p.x : p.y).rounded()))) }
-            else if let window, let zone { dropped = (window, Date().addingTimeInterval(0.4)); manager.send(.snap(window, zone)) }
+            else if let window { track(p) }
+            if border == nil, let window, let zone { dropped = (window, Date().addingTimeInterval(0.4)); manager.send(.snap(window, zone)) }
             reset()
         default: break
         }

@@ -16,6 +16,8 @@ final class Multitouch: @unchecked Sendable {
     private static let stride = 96
     /// On the framework's own thread: the number of fingers down and their centre.
     nonisolated(unsafe) private static var handler: (@Sendable (Int, CGPoint, Double) -> Void)?
+    /// Only three-finger frames, and the one that ends them, leave this thread: not every frame of plain pointing.
+    nonisolated(unsafe) private static var lastFingers = 0
     private static let callback: Callback = { _, touches, count, time, _ in
         var sum = CGPoint.zero, fingers = 0
         if let touches {
@@ -25,6 +27,8 @@ final class Multitouch: @unchecked Sendable {
                 sum.x += CGFloat(base.loadUnaligned(fromByteOffset: 32, as: Float.self)); sum.y += CGFloat(base.loadUnaligned(fromByteOffset: 36, as: Float.self)); fingers += 1
             }
         }
+        defer { Multitouch.lastFingers = fingers }
+        guard fingers == 3 || Multitouch.lastFingers == 3 else { return 0 }
         Multitouch.handler?(fingers, fingers > 0 ? CGPoint(x: sum.x / CGFloat(fingers), y: sum.y / CGFloat(fingers)) : .zero, time)
         return 0
     }

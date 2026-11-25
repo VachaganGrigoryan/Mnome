@@ -75,3 +75,39 @@ public enum WorkspaceDots {
     }
 }
 private extension Int { func clamped(to range: ClosedRange<Int>) -> Int { Swift.min(range.upperBound, Swift.max(range.lowerBound, self)) } }
+
+/// What Mnome's bar shows where, as the person arranged it: Command-drag in the bar, or Preferences → Shell → Top Bar.
+/// The app's menus always follow the left zone.
+public enum BarItem: String, Codable, CaseIterable, Sendable { case activities, clock, status, appIcons }
+public struct BarLayout: Codable, Equatable, Sendable {
+    public enum Zone: String, CaseIterable, Sendable { case left, center, right }
+    public var left: [BarItem], center: [BarItem], right: [BarItem]
+    public init(left: [BarItem], center: [BarItem], right: [BarItem]) { self.left = left; self.center = center; self.right = right }
+    /// GNOME's: Activities, the clock in the middle, the indicators and the status pill on the right.
+    public static let gnome = BarLayout(left: [.activities], center: [.clock], right: [.appIcons, .status])
+    public subscript(zone: Zone) -> [BarItem] {
+        get { switch zone { case .left: left; case .center: center; case .right: right } }
+        set { switch zone { case .left: left = newValue; case .center: center = newValue; case .right: right = newValue } }
+    }
+    /// A saved layout, or GNOME's when it is missing or does not hold each item exactly once.
+    public init(data: Data?) {
+        let saved = data.flatMap { try? JSONDecoder().decode(BarLayout.self, from: $0) }
+        self = saved.map { ($0.left + $0.center + $0.right).map(\.rawValue).sorted() == BarItem.allCases.map(\.rawValue).sorted() } == true ? saved! : .gnome
+    }
+    public var data: Data { (try? JSONEncoder().encode(self)) ?? Data() }
+    public var clockOnRight: Bool { right.contains(.clock) }
+    public func moving(_ item: BarItem, to zone: Zone, at index: Int) -> BarLayout {
+        var layout = self
+        for z in Zone.allCases { layout[z].removeAll { $0 == item } }
+        layout[zone].insert(item, at: min(max(0, index), layout[zone].count)); return layout
+    }
+    /// Where a dragged item lands: the third of the bar under `x`, and the slot there whose middle is past `x`.
+    public func dropping(_ item: BarItem, at x: CGFloat, width: CGFloat, widths: [BarItem: CGFloat]) -> BarLayout {
+        let zone: Zone = x < width / 3 ? .left : x > width * 2 / 3 ? .right : .center
+        let others = self[zone].filter { $0 != item }, sizes = others.map { widths[$0] ?? 0 }, total = sizes.reduce(0, +)
+        var start: CGFloat = switch zone { case .left: 0; case .center: (width - total) / 2; case .right: width - total }
+        var index = 0
+        for size in sizes { if x > start + size / 2 { index += 1 }; start += size }
+        return moving(item, to: zone, at: index)
+    }
+}

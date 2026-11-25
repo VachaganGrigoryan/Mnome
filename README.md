@@ -11,6 +11,8 @@ Apple Silicon, macOS 15 or later (built and tested on macOS 27). Swift/AppKit ho
 ### Top bar
 
 - GNOME's 32-point bar on every display, in Adwaita Sans with Adwaita's symbolic icons, light or dark.
+- **The app's menus** next to Activities, as GNOME 3's app menu: the front app's name in bold and its File, Edit, View… A click opens the app's own real menu, so every item, shortcut and checkmark is the app's.
+- **Rearrange it** like the Mac's: hold Command and drag Activities, the clock or the status pill to the left, middle or right; or use Preferences → Shell → Top Bar (clock in the middle or on the right, the right side's order). The app's menus take the room that is left and drop the titles that don't fit.
 - **Activities** on the left: one dot per workspace, the current one a wide pill; a click toggles the overview.
 - **Clock** in the centre, in GNOME's format and your locale; a click (or Super+V) opens the calendar with the day's events from Calendar.
 - **Status pill** on the right (network, volume, battery) opens **Quick Settings**: screenshot, System Settings, lock, power menu, volume and brightness sliders, Wi-Fi, Bluetooth, Night Light, Dark Style, Keep Awake and Mnome's own settings.

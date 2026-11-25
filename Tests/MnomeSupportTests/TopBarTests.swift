@@ -1,6 +1,19 @@
 import XCTest
 @testable import MnomeSupport
 final class TopBarTests: XCTestCase {
+    func testBarLayoutSavesMovesAndDrops() {
+        XCTAssertEqual(BarLayout(data: nil), .gnome)
+        XCTAssertEqual(BarLayout(data: Data("{}".utf8)), .gnome)
+        XCTAssertEqual(BarLayout(data: BarLayout(left: [.activities], center: [], right: [.status]).data), .gnome) // the clock and icons are missing
+        let mac = BarLayout.gnome.moving(.clock, to: .right, at: 99)
+        XCTAssertEqual(mac, BarLayout(left: [.activities], center: [], right: [.appIcons, .status, .clock]))
+        XCTAssertEqual(BarLayout(data: mac.data), mac); XCTAssertTrue(mac.clockOnRight)
+        let widths: [BarItem: CGFloat] = [.activities: 60, .clock: 120, .status: 100, .appIcons: 40]
+        XCTAssertEqual(BarLayout.gnome.dropping(.clock, at: 1580, width: 1600, widths: widths).right, [.appIcons, .status, .clock]) // past the pill
+        XCTAssertEqual(BarLayout.gnome.dropping(.clock, at: 1520, width: 1600, widths: widths).right, [.appIcons, .clock, .status]) // before the pill's middle
+        XCTAssertEqual(mac.dropping(.clock, at: 800, width: 1600, widths: widths), .gnome) // back to the middle
+        XCTAssertEqual(BarLayout.gnome.dropping(.status, at: 10, width: 1600, widths: widths).left, [.status, .activities])
+    }
     func testNegativeDisplayCoordinates() {
         XCTAssertEqual(TopBarGeometry.frame(screen: CGRect(x: -1920, y: -200, width: 1920, height: 1080), visible: CGRect(x: -1920, y: -200, width: 1920, height: 1056), safeTop: 0), CGRect(x: -1920, y: 824, width: 1920, height: 32))
     }

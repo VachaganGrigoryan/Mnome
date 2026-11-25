@@ -23,6 +23,10 @@ import MnomeSupport
     @Published var openMenu: String?
     /// GNOME's bar turns transparent over the overview.
     @Published var inOverview = false
+    /// The front app's menu titles, where its hidden Mac menu bar has them.
+    @Published var appMenus = AppMenus.Bar()
+    /// Command is held: the bar's items can be dragged to another place.
+    @Published var commandHeld = false
     private var monitor: NWPathMonitor?
     private var timer: Timer?
     private var clockTimer: Timer?
@@ -190,16 +194,36 @@ struct TopBarView: View {
     /// The width left of the notch, where the clock goes instead of behind it.
     var besideNotch: CGFloat?
     var menu: (String) -> Void = { _ in }
+    /// The display's frame, in AppKit coordinates.
+    var screen: CGRect = .zero
+    var appMenu: (Int) -> Void = { _ in }
     private var statusLabel: String { "System status and Mnome settings, \(status.battery ?? "No battery"), \(status.network)" + (status.volume.map { $0.muted ? ", muted" : ", volume \(Int(($0.level * 100).rounded()))%" } ?? "") }
+    @AppStorage("topBarLayout") private var layoutData = Data()
+    @State private var dragged: BarItem?
+    @State private var dragX: CGFloat = 0
     var body: some View {
+        let layout = BarLayout(data: layoutData)
         ZStack {
-            Button { menu("date") } label: { Text(status.clock).font(.adwaita(14.667, .bold)).monospacedDigit().lineLimit(1) }
-                .buttonStyle(PanelButtonStyle(open: status.openMenu == "date-\(display)")).accessibilityLabel("Date and time, \(status.clock)").accessibilityHint("Open the calendar")
-                .frame(width: besideNotch.map { max(0, $0 - 12) }, alignment: .trailing).frame(maxWidth: .infinity, alignment: besideNotch == nil ? .center : .leading)
-            HStack(spacing: 0) {
+            zone(layout.center, layout).frame(width: besideNotch.map { max(0, $0 - 12) }, alignment: .trailing).frame(maxWidth: .infinity, alignment: besideNotch == nil ? .center : .leading)
+            HStack(spacing: 0) { zone(layout.left, layout); Spacer(minLength: 0); zone(layout.right, layout) }
+            appMenus(layout).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }.frame(minHeight: 32, maxHeight: .infinity).background(status.inOverview ? Color.clear : ShellPalette.panel).overlay(alignment: .bottom) { if !status.inOverview { ShellPalette.panelEdge.frame(height: 0.5) } }
+        .coordinateSpace(name: "bar").shellTheme(follows: !status.inOverview) // white over the dark overview, in either style
+    }
+    private func zone(_ items: [BarItem], _ layout: BarLayout) -> some View {
+        HStack(spacing: 0) { ForEach(items, id: \.self) { item($0, layout) } }
+    }
+    /// With Command held, an item can be dragged to another place in the bar, as on the Mac.
+    private func item(_ item: BarItem, _ layout: BarLayout) -> some View {
+        Group {
+            switch item {
+            case .activities:
                 Button(action: activities) { WorkspaceDotsView(workspaces: status.workspaces) }
                     .buttonStyle(PanelButtonStyle()).accessibilityLabel(WorkspaceDots.label(count: status.workspaces.count, current: status.workspaces.current, on: status.workspaces.on)).accessibilityHint("Open or close the window overview")
-                Spacer()
+            case .clock:
+                Button { menu("date") } label: { Text(status.clock).font(.adwaita(14.667, .bold)).monospacedDigit().lineLimit(1) }
+                    .buttonStyle(PanelButtonStyle(open: status.openMenu == "date-\(display)")).accessibilityLabel("Date and time, \(status.clock)").accessibilityHint("Open the calendar")
+            case .status:
                 Button { menu("quick") } label: {
                     HStack(spacing: 12) {
                         AdwaitaIcon(name: StatusIcons.network(available: status.online, wifi: status.wifi, rssi: status.rssi), fallback: status.online ? "network" : "network.slash")
@@ -208,9 +232,47 @@ struct TopBarView: View {
                         else { AdwaitaIcon(name: "system-shutdown-symbolic", fallback: "power") }
                     }
                 }.buttonStyle(PanelButtonStyle(open: status.openMenu == "quick-\(display)")).help(status.network).accessibilityLabel(statusLabel)
+            case .appIcons: EmptyView()
             }
-        }.frame(minHeight: 32, maxHeight: .infinity).background(status.inOverview ? Color.clear : ShellPalette.panel).overlay(alignment: .bottom) { if !status.inOverview { ShellPalette.panelEdge.frame(height: 0.5) } }
-        .shellTheme(follows: !status.inOverview) // white over the dark overview, in either style
+        }
+        .offset(x: dragged == item ? dragX : 0).zIndex(dragged == item ? 1 : 0)
+        .highPriorityGesture(DragGesture(minimumDistance: 4, coordinateSpace: .named("bar"))
+            .onChanged { dragged = item; dragX = $0.translation.width }
+            .onEnded { value in
+                let widths = Dictionary(uniqueKeysWithValues: BarItem.allCases.map { ($0, width($0)) })
+                layoutData = layout.dropping(item, at: value.location.x, width: screen.width, widths: widths).data
+                dragged = nil; dragX = 0
+            }, including: status.commandHeld || dragged != nil ? .all : .subviews)
+    }
+    /// An item's width in the bar, for the app menus' room and for dropping.
+    private func width(_ item: BarItem) -> CGFloat {
+        switch item {
+        case .activities:
+            let dots = WorkspaceDots.dots(count: status.workspaces.count, current: status.workspaces.current, on: status.workspaces.on)
+            return dots.reduce(0) { $0 + ($1 ? WorkspaceDots.active.width : WorkspaceDots.inactive.width) } + WorkspaceDots.spacing * CGFloat(max(0, dots.count - 1)) + 24
+        case .clock: return (status.clock as NSString).size(withAttributes: [.font: NSFont(name: Adwaita.family, size: 14.667) ?? .boldSystemFont(ofSize: 14.667)]).width + 24
+        case .status: let icons: CGFloat = status.volume == nil ? 2 : 3; return icons * 16 + (icons - 1) * 12 + 24
+        case .appIcons: return 0
+        }
+    }
+}
+
+extension TopBarView {
+    /// Each title where the Mac has it, so the app's real menu opens under it. Only on the display the Mac's menu bar
+    /// is on, and not in the overview. They fill the room between the left zone and the next item.
+    @ViewBuilder fileprivate func appMenus(_ layout: BarLayout) -> some View {
+        let items = status.appMenus.items, top = WindowManager.primaryHeight - screen.maxY
+        if !status.inOverview, let first = items.first, (screen.minX..<screen.maxX).contains(first.frame.minX), abs(first.frame.minY - top) < 50 {
+            let start = layout.left.reduce(0) { $0 + width($1) }, center = layout.center.reduce(0) { $0 + width($1) }
+            let end = layout.center.isEmpty ? screen.width - layout.right.reduce(0) { $0 + width($1) } : besideNotch.map { $0 - 12 - center } ?? (screen.width - center) / 2
+            let xs = AppMenuStrip.layout(items.map { (x: $0.frame.minX - screen.minX, width: $0.frame.width) }, start: start, end: end - 8)
+            ZStack(alignment: .leading) {
+                ForEach(Array(xs.enumerated()), id: \.offset) { i, x in
+                    Button { appMenu(i) } label: { Text(items[i].title).font(.adwaita(14, i == 0 ? .bold : .regular)).lineLimit(1).minimumScaleFactor(0.8).frame(width: max(0, items[i].frame.width - 24)) }
+                        .buttonStyle(PanelButtonStyle()).offset(x: x).accessibilityLabel("\(items[i].title) menu")
+                }
+            }.frame(maxHeight: .infinity)
+        }
     }
 }
 
@@ -232,8 +294,15 @@ final class TopBarPanel: NSPanel {
     var model: Model?
     var dock: DockModel?
     var macChrome: MacChromeController?
+    /// The front app's menus; nil while the Mac's menu bar is the bar.
+    var appMenus: AppMenus?
+    private var commandWatch: [Any] = []
     func start() {
         status.start(); rebuild()
+        if commandWatch.isEmpty { // the bar's items move with Command held, wherever the keyboard is
+            let flags: (NSEvent) -> Void = { [weak self] event in MainActor.assumeIsolated { let held = event.modifierFlags.contains(.command); if self?.status.commandHeld != held { self?.status.commandHeld = held } } }
+            commandWatch = [NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged, handler: flags) as Any, NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { flags($0); return $0 } as Any]
+        }
         observer = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.rebuild() } }
     }
     func setVisible(_ visible: Bool) { UserDefaults.standard.set(visible, forKey: "showTopBar"); rebuild() }
@@ -245,7 +314,7 @@ final class TopBarPanel: NSPanel {
             let panel = TopBarPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false; panel.level = replacesMenuBar ? NSWindow.Level(rawValue: 27) : .floating // above the Mac menu bar (24) and its status items (25): an auto-hidden menu bar that slides down when the pointer touches the top stays underneath
             panel.collectionBehavior = [.canJoinAllSpaces, .stationary]; panel.isOpaque = false; panel.backgroundColor = .clear
-            panel.contentView = NSHostingView(rootView: TopBarView(status: status, model: model, dock: dock, macChrome: macChrome, activities: activities, actions: actions, display: WindowManager.displayID(screen), besideNotch: replacesMenuBar ? screen.auxiliaryTopLeftArea?.width : nil, menu: { [weak self] in self?.toggleMenu($0, on: screen) }))
+            panel.contentView = NSHostingView(rootView: TopBarView(status: status, model: model, dock: dock, macChrome: macChrome, activities: activities, actions: actions, display: WindowManager.displayID(screen), besideNotch: replacesMenuBar ? screen.auxiliaryTopLeftArea?.width : nil, menu: { [weak self] in self?.toggleMenu($0, on: screen) }, screen: screen.frame, appMenu: { [weak self] in self?.appMenus?.open($0) }))
             panel.setFrame(frame, display: true); panel.orderFrontRegardless(); panels.append(panel)
         }
     }
@@ -278,8 +347,14 @@ final class TopBarPanel: NSPanel {
         guard let model, let dock, let macChrome else { return }
         menus.changed = { [weak self] in self?.status.openMenu = $0 }
         let id = "\(kind)-\(WindowManager.displayID(screen))", bar = anchor ?? frame(on: screen)
-        if kind == "date" { menus.toggle(id, in: bar, place: place ?? .center, DateMenuView(agenda: agenda).shellTheme(follows: true)) }
-        else { menus.toggle(id, in: bar, place: place ?? .trailing, QuickSettingsView(status: status, controls: controls, model: model, dock: dock, macChrome: macChrome, actions: actions, dismiss: { [weak self] in self?.menus.close() }, endSession: { [weak self] in self?.endSession($0) }).shellTheme(follows: true)) }
+        let place = place ?? zonePlace(kind == "date" ? .clock : .status, bar: bar)
+        if kind == "date" { menus.toggle(id, in: bar, place: place, DateMenuView(agenda: agenda).shellTheme(follows: true)) }
+        else { menus.toggle(id, in: bar, place: place, QuickSettingsView(status: status, controls: controls, model: model, dock: dock, macChrome: macChrome, actions: actions, dismiss: { [weak self] in self?.menus.close() }, endSession: { [weak self] in self?.endSession($0) }).shellTheme(follows: true)) }
+    }
+    /// A menu opens under its item: at the left edge, in the middle or at the right edge, wherever the item was put.
+    private func zonePlace(_ item: BarItem, bar: CGRect) -> ShellMenus.Place {
+        let layout = BarLayout(data: UserDefaults.standard.data(forKey: "topBarLayout"))
+        return layout.left.contains(item) ? .under(CGRect(x: bar.minX, y: bar.minY, width: 0, height: bar.height)) : layout.center.contains(item) ? .center : .trailing
     }
     func stop() {
         if let observer { NotificationCenter.default.removeObserver(observer) }; observer = nil

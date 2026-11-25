@@ -21,6 +21,10 @@ import MnomeSupport
             try save(TopBarView(status: reference, model: model, dock: dock, macChrome: chrome, activities: {}, actions: QuickActions()), CGSize(width: 1280, height: 32), name, directory)
         }
         settings.choice = "Dark"
+        let arranged = UserDefaults.standard.data(forKey: "topBarLayout") // the Mac's arrangement, the clock on the right
+        UserDefaults.standard.set(BarLayout.gnome.moving(.clock, to: .right, at: .max).data, forKey: "topBarLayout")
+        try save(TopBarView(status: reference, model: model, dock: dock, macChrome: chrome, activities: {}, actions: QuickActions()), CGSize(width: 1280, height: 32), "top-bar-clock-right", directory)
+        UserDefaults.standard.set(arranged, forKey: "topBarLayout")
         try save(DateMenuView(agenda: Agenda(preview: true), at: Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 4, hour: 15, minute: 15))).shellTheme(follows: true), nil, "date-menu", directory)
         status.volume = (0, true); status.online = true; status.wifi = false
         try save(QuickSettingsView(status: status, controls: SystemControls(), model: model, dock: dock, macChrome: chrome, actions: QuickActions(), dismiss: {}).shellTheme(follows: true), nil, "quick-settings", directory)

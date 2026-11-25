@@ -20,6 +20,13 @@ final class MenuSupportTests: XCTestCase {
         XCTAssertEqual(grid.title, "March 2027")
         XCTAssertNil(grid.days.firstIndex(where: \.today))
     }
+    func testAppMenusKeepTheMacPositionsAndStopBeforeTheClock() {
+        let items: [(x: CGFloat, width: CGFloat)] = [(43, 77), (120, 50), (170, 45), (215, 69)]
+        XCTAssertEqual(AppMenuStrip.layout(items, start: 40, end: 600), [43, 120, 170, 215]) // room: where the Mac has them
+        XCTAssertEqual(AppMenuStrip.layout(items, start: 60, end: 600), [60, 137, 187, 232]) // Activities is wider: all move right
+        XCTAssertEqual(AppMenuStrip.layout(items, start: 40, end: 260), [43, 120, 170]) // the last would reach the clock
+        XCTAssertEqual(AppMenuStrip.layout([], start: 40, end: 600), [])
+    }
     func testRunCommand() {
         XCTAssertEqual(RunCommand("  "), .nothing)
         XCTAssertEqual(RunCommand("r"), .restartShell)

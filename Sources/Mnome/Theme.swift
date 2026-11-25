@@ -339,6 +339,7 @@ struct PreferencesView: View {
                             CheckRow(title: "The Mac's Menu Bar, with Mnome's Items", selected: !topBarOn) { if topBarOn { actions.toggleTopBar() } }
                             SwitchRow(title: "Show Dock", isOn: Binding(get: { dockOn }, set: { _ in actions.toggleDock() }))
                         }
+                        if topBarOn { TopBarArrangement() }
                         PreferencesGroup(title: "macOS", footer: "Hidden while Mnome runs. Your original settings return when Mnome quits; if it ever quits unexpectedly, relaunch it and quit normally, or use Restore All.") {
                             ForEach(MacElement.allCases, id: \.self) { element in
                                 SwitchRow(title: element.title, isOn: Binding(get: { macChrome.hidden.contains(element) }, set: { macChrome.set(element, hidden: $0) }))
@@ -452,6 +453,28 @@ struct AboutView: View {
                 BoxedList { ActionRow(title: "Built with") { Text("Rust + Swift").foregroundStyle(.secondary) } }.padding(.top, 12)
             }.padding(32)
             Spacer(minLength: 0)
+        }
+    }
+}
+
+/// Where the top bar's items go; the same as Command-dragging them in the bar.
+private struct TopBarArrangement: View {
+    @AppStorage("topBarLayout") private var data = Data()
+    private static let names: [BarItem: String] = [.activities: "Activities", .clock: "Clock", .status: "System Status", .appIcons: "App Icons"]
+    var body: some View {
+        let layout = BarLayout(data: data)
+        PreferencesGroup(title: "Top Bar", footer: "Hold Command and drag an item in the bar to move it. The app's menus follow Activities.") {
+            CheckRow(title: "Clock in the Middle", selected: !layout.clockOnRight) { data = layout.moving(.clock, to: .center, at: 0).data }
+            CheckRow(title: "Clock on the Right", selected: layout.clockOnRight) { data = layout.moving(.clock, to: .right, at: .max).data }
+            ForEach(Array(layout.right.enumerated()), id: \.element) { i, item in
+                ActionRow(title: Self.names[item] ?? item.rawValue, subtitle: i == 0 ? "Right side, from the left" : nil) {
+                    HStack(spacing: 4) {
+                        Button { data = layout.moving(item, to: .right, at: i - 1).data } label: { Image(systemName: "chevron.left") }.disabled(i == 0).accessibilityLabel("Move \(Self.names[item] ?? "") left")
+                        Button { data = layout.moving(item, to: .right, at: i + 1).data } label: { Image(systemName: "chevron.right") }.disabled(i == layout.right.count - 1).accessibilityLabel("Move \(Self.names[item] ?? "") right")
+                    }.buttonStyle(.borderless)
+                }
+            }
+            ActionRow(title: "Reset to GNOME's Layout", icon: "arrow.uturn.backward", action: { data = BarLayout.gnome.data }).disabled(layout == .gnome)
         }
     }
 }

@@ -23,7 +23,7 @@ final class ShellMenuPanel: NSPanel {
         let x: CGFloat = switch place { case .center, .middle: anchor.midX - size.width / 2; case .trailing: anchor.maxX - size.width - 8 }
         let y: CGFloat = place == .middle ? anchor.midY - size.height / 2 + anchor.height * 0.1 : anchor.minY - 8 - size.height
         let panel = ShellMenuPanel(contentRect: CGRect(x: x, y: y, width: size.width, height: size.height), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false; panel.level = NSWindow.Level(rawValue: 25); panel.becomesKeyOnlyIfNeeded = false
+        panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false; panel.level = NSWindow.Level(rawValue: 28) // above the bar; panel.becomesKeyOnlyIfNeeded = false
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true; panel.collectionBehavior = [.canJoinAllSpaces, .transient]
         panel.contentView = host; panel.closed = { [weak self] in self?.close() }
         panel.alphaValue = 0; panel.orderFrontRegardless(); panel.makeKey()

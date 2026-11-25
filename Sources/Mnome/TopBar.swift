@@ -243,7 +243,7 @@ final class TopBarPanel: NSPanel {
         for screen in NSScreen.screens {
             let frame = frame(on: screen)
             let panel = TopBarPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-            panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false; panel.level = replacesMenuBar ? NSWindow.Level(rawValue: 24) : .floating // lower, macOS pushes it down; higher, the Mac menus stay out of reach
+            panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false; panel.level = replacesMenuBar ? NSWindow.Level(rawValue: 27) : .floating // above the Mac menu bar (24) and its status items (25): an auto-hidden menu bar that slides down when the pointer touches the top stays underneath
             panel.collectionBehavior = [.canJoinAllSpaces, .stationary]; panel.isOpaque = false; panel.backgroundColor = .clear
             panel.contentView = NSHostingView(rootView: TopBarView(status: status, model: model, dock: dock, macChrome: macChrome, activities: activities, actions: actions, display: WindowManager.displayID(screen), besideNotch: replacesMenuBar ? screen.auxiliaryTopLeftArea?.width : nil, menu: { [weak self] in self?.toggleMenu($0, on: screen) }))
             panel.setFrame(frame, display: true); panel.orderFrontRegardless(); panels.append(panel)

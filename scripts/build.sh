@@ -25,7 +25,9 @@ cat > build/Mnome.app/Contents/Info.plist <<'PLIST'
 <key>CFBundleVersion</key><string>1</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>NSHighResolutionCapable</key><true/>
-<key>NSAppleEventsUsageDescription</key><string>Mnome hides and restores the macOS menu bar.</string>
+<key>NSAppleEventsUsageDescription</key><string>Mnome hides and restores the macOS menu bar, and asks macOS to suspend, restart, power off or log out when you choose it in Quick Settings.</string>
+<key>NSBluetoothAlwaysUsageDescription</key><string>Mnome shows whether Bluetooth is on and switches it from Quick Settings, as GNOME does.</string>
+<key>NSCalendarsFullAccessUsageDescription</key><string>Mnome shows the day's events in the calendar under the clock, as GNOME does. Nothing leaves your Mac.</string>
 </dict></plist>
 PLIST
 # An ad-hoc signature changes every build, so macOS forgets permissions; a fixed identity keeps them.

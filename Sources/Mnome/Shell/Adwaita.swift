@@ -10,7 +10,7 @@ import CoreText
     /// Process-wide only: nothing is installed for the person.
     static func registerFont() {
         guard !fontReady else { return }
-        if let url = Bundle.module.url(forResource: "AdwaitaSans-Regular", withExtension: "ttf") { CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil) }
+        for face in ["AdwaitaSans-Regular", "AdwaitaSans-Italic"] { if let url = Bundle.module.url(forResource: face, withExtension: "ttf") { CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil) } }
         fontReady = NSFont(name: family, size: 12) != nil
     }
     static func icon(_ name: String) -> NSImage? {

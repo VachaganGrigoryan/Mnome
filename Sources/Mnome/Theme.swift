@@ -39,6 +39,8 @@ enum ShellPalette {
     static let panelEdge = adaptive(hex(0x222226, 0.1), .clear)
     static let popover = adaptive(hex(0xfafafb), hex(0x36363a))
     static let popoverBorder = adaptive(hex(0xe6e6eb), hex(0x424247))
+    /// Sections inside a menu: events, messages, power menu (sampled from the reference: #47474c).
+    static let card = adaptive(hex(0xebebed), hex(0x47474c))
     static let overview = Color(nsColor: hex(0x222226))
     static let dash = Color(nsColor: hex(0x38383b))
     static let switcher = Color(nsColor: hex(0x2e2e33))

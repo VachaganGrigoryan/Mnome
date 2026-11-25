@@ -5,8 +5,12 @@ import MnomeSupport
 final class EventTap: @unchecked Sendable {
     /// On the main thread.
     var onDecision: @MainActor (KeyRouter.Decision) -> Void = { _ in }
+    var onMedia: @MainActor (MediaKey) -> Void = { _ in }
     private let thread = RunLoopThread("dev.mnome.keys")
     private var keys: CFMachPort?, pointer: CFMachPort?, router = KeyRouter() // only on the tap thread
+    private var media: (volume: Bool, brightness: Bool) = (false, false) // tap thread
+    /// Which of the volume and brightness keys Mnome answers; the rest stay the Mac's.
+    func takeMedia(volume: Bool, brightness: Bool) { thread.perform { self.media = (volume, brightness) } }
 
     /// When a release was missed, for example while macOS protected a password field.
     func endSwitcher() { thread.perform { self.router.reset() } }
@@ -20,7 +24,7 @@ final class EventTap: @unchecked Sendable {
         router.reset()
         let me = Unmanaged.passUnretained(self).toOpaque() // lives as long as the app
         func mask(_ types: [CGEventType]) -> CGEventMask { types.reduce(0) { $0 | 1 << $1.rawValue } }
-        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: mask([.flagsChanged, .keyDown, .keyUp]), callback: { _, type, event, me in
+        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: mask([.flagsChanged, .keyDown, .keyUp]) | 1 << 14 /* NX_SYSDEFINED: volume, brightness */, callback: { _, type, event, me in
             guard let me else { return Unmanaged.passUnretained(event) }
             return Unmanaged<EventTap>.fromOpaque(me).takeUnretainedValue().key(type, event) ? Unmanaged.passUnretained(event) : nil
         }, userInfo: me) else { return false }
@@ -35,6 +39,7 @@ final class EventTap: @unchecked Sendable {
     private func close() { for tap in [keys, pointer] { if let tap { CGEvent.tapEnable(tap: tap, enable: false); CFMachPortInvalidate(tap) } }; keys = nil; pointer = nil; router.reset() }
     private func pointed(_ type: CGEventType) { if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput { if let pointer { CGEvent.tapEnable(tap: pointer, enable: true) } }; router.pointer() }
     private func key(_ type: CGEventType, _ event: CGEvent) -> Bool {
+        if type.rawValue == 14 { return mediaKey(event) }
         let code = event.getIntegerValueField(.keyboardEventKeycode), flags = event.flags.rawValue
         let decision: KeyRouter.Decision
         switch type {
@@ -56,6 +61,17 @@ final class EventTap: @unchecked Sendable {
     }
 }
 
+extension EventTap {
+    /// Option keeps the Mac's meaning (Option+volume opens Sound settings).
+    private func mediaKey(_ event: CGEvent) -> Bool {
+        guard let ns = NSEvent(cgEvent: event), let (key, down) = MediaKey.parse(subtype: ns.subtype.rawValue, data1: ns.data1), !event.flags.contains(.maskAlternate) else { return true }
+        let ours = switch key { case .volumeUp, .volumeDown, .mute: media.volume; case .brightnessUp, .brightnessDown: media.brightness }
+        guard ours else { return true }
+        if down { DispatchQueue.main.async { MainActor.assumeIsolated { self.onMedia(key) } } }
+        return false
+    }
+}
+
 /// The person's shortcuts, saved, and the tap that listens for them.
 @MainActor final class ShortcutStore: ObservableObject {
     static let shared = ShortcutStore()
@@ -65,14 +81,15 @@ final class EventTap: @unchecked Sendable {
     @Published private(set) var recording: ShellAction?
     @Published private(set) var message: String?
     @Published private(set) var listening = false
-    var run: (ShellAction) -> Void = { _ in }, superTapped: () -> Void = {}, switcher: (KeyRouter.SwitcherKey) -> Void = { _ in }
+    var run: (ShellAction) -> Void = { _ in }, superTapped: () -> Void = {}, switcher: (KeyRouter.SwitcherKey) -> Void = { _ in }, media: (MediaKey) -> Void = { _ in }
+    func takeMedia(volume: Bool, brightness: Bool) { tap.takeMedia(volume: volume, brightness: brightness) }
     private let tap = EventTap()
     private var session = UUID()
     private init() { NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.stopRecording() } } }
 
     /// Call again whenever Accessibility may have been granted.
     func start() {
-        tap.onDecision = { [weak self] in self?.handle($0) }
+        tap.onDecision = { [weak self] in self?.handle($0) }; tap.onMedia = { [weak self] in self?.media($0) }
         guard enabled else { tap.stop(); listening = false; return }
         listening = tap.start(); apply()
         if !listening { NSLog("Mnome: the keyboard could not be listened to") }

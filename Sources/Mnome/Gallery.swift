@@ -20,7 +20,12 @@ import MnomeSupport
             settings.choice = choice
             try save(TopBarView(status: reference, model: model, dock: dock, macChrome: chrome, activities: {}, actions: QuickActions()), CGSize(width: 1280, height: 32), name, directory)
         }
-        try save(QuickSettingsView(status: status, model: model, dock: dock, macChrome: chrome, actions: QuickActions(), dismiss: {}).shellTheme(follows: true), nil, "quick-settings", directory)
+        settings.choice = "Dark"
+        try save(DateMenuView(agenda: Agenda(preview: true), at: Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 4, hour: 15, minute: 15))).shellTheme(follows: true), nil, "date-menu", directory)
+        status.volume = (0, true); status.online = true; status.wifi = false
+        try save(QuickSettingsView(status: status, controls: SystemControls(), model: model, dock: dock, macChrome: chrome, actions: QuickActions(), dismiss: {}).shellTheme(follows: true), nil, "quick-settings", directory)
+        try save(RunDialogView(close: {}).shellTheme(follows: true), nil, "run-dialog", directory)
+        try save(EndSessionView(action: .restart, cancel: {}, confirm: {}).shellTheme(follows: true), nil, "end-session", directory)
         try save(ScrollView { VStack(alignment: .leading, spacing: 20) { KeyboardPreferences() }.padding(24) }.mnomeTheme().background(ThemePalette.background), CGSize(width: 560, height: 1500), "preferences-keyboard", directory)
         try save(ShortcutsView().mnomeTheme().background(ThemePalette.background), CGSize(width: 520, height: 1100), "shortcuts", directory)
         try save(DockView(model: dock), CGSize(width: 440, height: 80), "dash", directory)

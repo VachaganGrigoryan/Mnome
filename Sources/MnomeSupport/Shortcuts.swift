@@ -51,7 +51,7 @@ public struct Chord: Codable, Hashable, Sendable {
 }
 
 public enum ShellAction: String, CaseIterable, Codable, Sendable {
-    case appGrid, quickSettings, lock
+    case appGrid, quickSettings, lock, dateMenu, runCommand
     case tileLeft, tileRight, maximize, restore, minimize, center, close, showDesktop, cycle, cycleBack
     case moveLeft, moveRight, moveUp, moveDown
     case workspacePrevious, workspaceNext, carryPrevious, carryNext, workspaceFirst, workspaceLast
@@ -62,6 +62,8 @@ public enum ShellAction: String, CaseIterable, Codable, Sendable {
         case .appGrid: "Show applications"
         case .quickSettings: "Quick settings"
         case .lock: "Lock screen"
+        case .dateMenu: "Show the calendar and notifications"
+        case .runCommand: "Run a command"
         case .tileLeft: "Tile to the left"
         case .tileRight: "Tile to the right"
         case .maximize: "Maximize"
@@ -88,7 +90,7 @@ public enum ShellAction: String, CaseIterable, Codable, Sendable {
     public enum Group: String, CaseIterable, Sendable { case shell = "Shell", windows = "Windows", workspaces = "Workspaces", displays = "Displays", dash = "Dash" }
     public var group: Group {
         switch self {
-        case .appGrid, .quickSettings, .lock: .shell
+        case .appGrid, .quickSettings, .lock, .dateMenu, .runCommand: .shell
         case .moveLeft, .moveRight, .moveUp, .moveDown: .displays
         case .workspacePrevious, .workspaceNext, .carryPrevious, .carryNext, .workspaceFirst, .workspaceLast: .workspaces
         default: launchIndex == nil ? .windows : .dash
@@ -100,6 +102,8 @@ public enum ShellAction: String, CaseIterable, Codable, Sendable {
         case .appGrid: Chord(0, .superKey)
         case .quickSettings: Chord(1, .superKey)
         case .lock: Chord(37, .superKey)
+        case .dateMenu: Chord(9, .superKey)
+        case .runCommand: Chord(120, .option) // Option+F2; on a Mac keyboard with Fn unless F-keys are standard
         case .tileLeft: Chord(123, .superKey)
         case .tileRight: Chord(124, .superKey)
         case .maximize: Chord(126, .superKey)

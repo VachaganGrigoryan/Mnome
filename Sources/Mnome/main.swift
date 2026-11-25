@@ -237,7 +237,8 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
     let macChrome = MacChromeController()
     let windowManager = WindowManager()
     let switcher = SwitcherController(), workspacePopup = WorkspacePopup()
-    private var workspaceWatch: AnyCancellable?
+    private var workspaceWatch: AnyCancellable?, mediaWatch: AnyCancellable?, screensWatch: NSObjectProtocol?
+    let osd = OSD()
     let model = Model(); var panel: NSPanel?; var panels: [NSPanel] = []; var status: NSStatusItem!; var hotkey: EventHotKeyRef?; var previous: NSRunningApplication?
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory); model.shortcutTitle = UserDefaults.standard.string(forKey: "shortcutTitle") ?? "Control–Option–Space"; model.discover(); model.close = { [weak self] in self?.dismiss(reactivate: $0) }
@@ -274,7 +275,7 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
             openMnome: { [weak self] in self?.showActivities() }, preferences: { [weak self] in self?.showPreferences() }, shortcuts: { [weak self] in self?.showKeyboardShortcuts() },
             about: { [weak self] in self?.showAbout() }, quit: { [weak self] in self?.quit() }, systemSettings: { [weak self] in self?.openSettings("") },
             networkSettings: { [weak self] in self?.openNetworkSettings() }, batterySettings: { [weak self] in self?.openBatterySettings() },
-            focusDock: { [weak self] in self?.focusDock() }, focusTopBar: { [weak self] in self?.focusTopBar() }, setWorkspaces: { [weak self] in self?.windowManager.workspacesWanted = $0 },
+            lock: { [weak self] in self?.perform(.lock) }, focusDock: { [weak self] in self?.focusDock() }, focusTopBar: { [weak self] in self?.focusTopBar() }, setWorkspaces: { [weak self] in self?.windowManager.workspacesWanted = $0 },
             toggleTopBar: { [weak self] in self?.setTopBarVisible(!(self?.topBar.enabled ?? true)) }, toggleDock: { [weak self] in self?.setDockVisible(!(self?.dock.enabled ?? true)) },
             setShortcut: { [weak self] in self?.applyShortcut($0) }, removeFavorite: { [weak self] in self?.dock.model.remove($0) },
             toggleMacChrome: { [weak self] in guard let self else { return }; self.macChrome.setAll(hidden: self.macChrome.hidden.isEmpty) }, bringBackWindows: { [weak self] in self?.bringBackWindows() })
@@ -356,13 +357,34 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
         store.run = { [weak self] in self?.perform($0) }
         switcher.windowManager = windowManager; switcher.endKeys = { store.endSwitcher() }
         store.switcher = { [weak self] in self?.switcher.handle($0) }
+        store.media = { [weak self] in self?.mediaKey($0) }
         store.start()
+        mediaWatch = topBar.status.$volume.sink { [weak self] _ in DispatchQueue.main.async { self?.takeMediaKeys() } }
+        screensWatch = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.takeMediaKeys() } }
+    }
+    /// Only what Mnome can do itself: an output with its own volume, the built-in display's brightness.
+    private func takeMediaKeys() { ShortcutStore.shared.takeMedia(volume: topBar.status.volumeSettable, brightness: topBar.controls.builtIn.flatMap(Private.brightness) != nil) }
+    private func mediaKey(_ key: MediaKey) {
+        let status = topBar.status, controls = topBar.controls
+        switch key {
+        case .volumeUp, .volumeDown, .mute:
+            guard let volume = status.volume else { return }
+            if key == .mute { status.setMuted(!volume.muted) } else { status.setVolume(MediaKey.step(volume.level, up: key == .volumeUp)) }
+            guard let now = status.volume else { return }
+            osd.show(icon: StatusIcons.volume(level: now.level, muted: now.muted), fallback: "speaker.wave.2", level: now.muted ? 0 : now.level)
+        case .brightnessUp, .brightnessDown:
+            guard let id = controls.builtIn, let level = Private.brightness(id) else { return }
+            controls.setBrightness(MediaKey.step(Double(level), up: key == .brightnessUp))
+            osd.show(icon: "display-brightness-symbolic", fallback: "sun.max", level: Private.brightness(id).map(Double.init))
+        }
     }
     func perform(_ action: ShellAction) {
         if let index = action.launchIndex { if dock.model.items.indices.contains(index) { dock.model.open(dock.model.items[index]) }; return }
         switch action {
         case .appGrid: if panel?.isVisible == true && !model.overview { dismiss() } else if panel?.isVisible == true { model.overview = false } else { model.overview = false; toggle() }
         case .quickSettings: topBar.toggleQuickSettings()
+        case .dateMenu: topBar.toggleDateMenu()
+        case .runCommand: topBar.toggleRunDialog()
         case .lock: if !Private.lockScreen() { NSLog("Mnome: this macOS cannot lock the screen this way") }
         case .tileLeft: windowManager.withFocused { .snap($0, .left) }
         case .tileRight: windowManager.withFocused { .snap($0, .right) }
@@ -481,6 +503,12 @@ MainActor.assumeIsolated {
             guard let icon = Adwaita.icon(name), icon.size.width > 0 else { fatalError("Missing Adwaita icon \(name)") }
         }
     }
+    nonisolated(unsafe) var outcomes: [String?]?
+    Task.detached { outcomes = [await Runner.shell("true"), await Runner.shell("mnome-no-such-command-x")] }
+    let deadline = Date().addingTimeInterval(20)
+    while outcomes == nil, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) } // the process's exit arrives through the main loop
+    guard let outcomes, outcomes.count == 2, outcomes[0] == nil, outcomes[1]?.hasPrefix("No such command") == true else { fatalError("Run a Command: \(outcomes)") }
+    guard Runner.application(named: "terminal")?.lastPathComponent == "Terminal.app", Runner.application(named: "ls -la") == nil else { fatalError("Run a Command does not find applications") }
     print("Mnome bridge self-test passed"); exit(0)
  }
  if CommandLine.arguments.contains("--permissions") {

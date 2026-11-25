@@ -31,6 +31,9 @@ enum Private {
 
     private static let bluetooth = symbol("/System/Library/Frameworks/IOBluetooth.framework/IOBluetooth", "IOBluetoothPreferenceGetControllerPowerState", as: (@convention(c) () -> Int32).self)
     static var bluetoothOn: Bool? { bluetooth.map { $0() != 0 } }
+    private static let putBluetooth = symbol("/System/Library/Frameworks/IOBluetooth.framework/IOBluetooth", "IOBluetoothPreferenceSetControllerPowerState", as: (@convention(c) (Int32) -> Void).self)
+    /// False when this macOS no longer has the call.
+    static func setBluetooth(_ on: Bool) -> Bool { putBluetooth.map { $0(on ? 1 : 0); return true } ?? false }
 
     private static let nightClient: NSObject? = { dlopen("/System/Library/PrivateFrameworks/CoreBrightness.framework/CoreBrightness", RTLD_NOW); return (NSClassFromString("CBBlueLightClient") as? NSObject.Type)?.init() }()
     /// The method, only with the signature we know: a different one would corrupt memory.

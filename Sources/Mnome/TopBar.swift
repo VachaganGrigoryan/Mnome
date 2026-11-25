@@ -72,11 +72,14 @@ struct TopBarView: View {
     let activities: () -> Void
     let actions: QuickActions
     var display: UInt64 = 0
+    /// The width left of the notch, where the clock goes instead of behind it.
+    var besideNotch: CGFloat?
     @State private var showingMenu = false
     private var statusLabel: String { "System status and Mnome settings, \(status.battery ?? "No battery"), \(status.network)" }
     var body: some View {
         ZStack {
             Text(status.clock).font(.callout.weight(.semibold)).accessibilityLabel("Date and time, \(status.clock)")
+                .frame(width: besideNotch.map { max(0, $0 - 12) }, alignment: .trailing).frame(maxWidth: .infinity, alignment: besideNotch == nil ? .center : .leading)
             HStack {
                 Button(action: activities) { Text("Activities").font(.callout.weight(.semibold)).padding(.horizontal, 12).padding(.vertical, 3) }
                     .buttonStyle(ShellButtonStyle()).accessibilityHint("Open or close the window overview")
@@ -92,7 +95,7 @@ struct TopBarView: View {
                     QuickSettingsView(status: status, model: model, dock: dock, macChrome: macChrome, actions: actions, dismiss: { showingMenu = false }).shellTheme()
                 }
             }.padding(.horizontal, 8)
-        }.foregroundStyle(.white).frame(height: 32).background(ShellPalette.panel).shellTheme()
+        }.foregroundStyle(.white).frame(minHeight: 32, maxHeight: .infinity).background(ShellPalette.panel).shellTheme()
         .onChange(of: status.menuRequest?.id) { _, _ in if status.menuRequest?.display == display { showingMenu.toggle() } }
     }
 }
@@ -200,14 +203,16 @@ final class TopBarPanel: NSPanel {
         panels.forEach { $0.close() }; panels = []
         guard enabled, let model, let dock, let macChrome else { return }
         for screen in NSScreen.screens {
-            let frame = TopBarGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, safeTop: screen.safeAreaInsets.top)
+            let frame = frame(on: screen)
             let panel = TopBarPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-            panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false; panel.level = .floating
+            panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false; panel.level = replacesMenuBar ? NSWindow.Level(rawValue: 24) : .floating // lower, macOS pushes it down; higher, the Mac menus stay out of reach
             panel.collectionBehavior = [.canJoinAllSpaces, .stationary]; panel.isOpaque = true
-            panel.contentView = NSHostingView(rootView: TopBarView(status: status, model: model, dock: dock, macChrome: macChrome, activities: activities, actions: actions, display: WindowManager.displayID(screen)))
-            panel.orderFrontRegardless(); panels.append(panel)
+            panel.contentView = NSHostingView(rootView: TopBarView(status: status, model: model, dock: dock, macChrome: macChrome, activities: activities, actions: actions, display: WindowManager.displayID(screen), besideNotch: replacesMenuBar ? screen.auxiliaryTopLeftArea?.width : nil))
+            panel.setFrame(frame, display: true); panel.orderFrontRegardless(); panels.append(panel)
         }
     }
+    private var replacesMenuBar: Bool { macChrome?.hidden.contains(.menuBar) ?? false }
+    func frame(on screen: NSScreen) -> CGRect { TopBarGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, safeTop: screen.safeAreaInsets.top, replacesMenuBar: replacesMenuBar) }
     func focus() { panels.first?.takeKeyboard() }
     /// On the display under the pointer.
     func toggleQuickSettings() { guard enabled, let screen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main else { return }; status.menuRequest = (UUID(), WindowManager.displayID(screen)) }

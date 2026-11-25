@@ -319,7 +319,7 @@ struct PreferencesView: View {
                             SwitchRow(title: "Show Top Bar", isOn: Binding(get: { topBarOn }, set: { _ in actions.toggleTopBar() }))
                             SwitchRow(title: "Show Dock", isOn: Binding(get: { dockOn }, set: { _ in actions.toggleDock() }))
                         }
-                        PreferencesGroup(title: "macOS", footer: "Original settings are saved and restored automatically when Mnome quits. If Mnome ever quits unexpectedly, relaunch it and use Restore All.") {
+                        PreferencesGroup(title: "macOS", footer: "Hidden while Mnome runs. Your original settings return when Mnome quits; if it ever quits unexpectedly, relaunch it and quit normally, or use Restore All.") {
                             ForEach(MacElement.allCases, id: \.self) { element in
                                 SwitchRow(title: element.title, isOn: Binding(get: { macChrome.hidden.contains(element) }, set: { macChrome.set(element, hidden: $0) }))
                             }

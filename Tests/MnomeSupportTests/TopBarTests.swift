@@ -9,6 +9,14 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(TopBarGeometry.frame(screen: screen, visible: screen, safeTop: 38).maxY, 944)
         XCTAssertEqual(TopBarGeometry.frame(screen: screen, visible: CGRect(x: 0, y: 0, width: 1512, height: 958), safeTop: 0).maxY, 958)
     }
+    func testReplacingTheMenuBarTakesTheTopEdge() {
+        let screen = CGRect(x: 0, y: 0, width: 1512, height: 982), stale = CGRect(x: 0, y: 0, width: 1512, height: 948)
+        XCTAssertEqual(TopBarGeometry.frame(screen: screen, visible: stale, safeTop: 32, replacesMenuBar: true), CGRect(x: 0, y: 950, width: 1512, height: 32))
+        XCTAssertEqual(TopBarGeometry.frame(screen: screen, visible: stale, safeTop: 38, replacesMenuBar: true), CGRect(x: 0, y: 944, width: 1512, height: 38))
+        let bar = TopBarGeometry.frame(screen: screen, visible: stale, safeTop: 0, replacesMenuBar: true)
+        XCTAssertEqual(WorkArea.rect(visible: stale, bar: bar, dock: nil, screenTop: 982).maxY, 950)
+        XCTAssertEqual(WorkArea.rect(visible: stale, bar: bar.offsetBy(dx: 0, dy: -32), dock: nil, screenTop: 982).maxY, 918)
+    }
     func testBatteryAndMissingData() {
         XCTAssertNil(StatusText.battery(current: nil, maximum: nil, charging: false))
         XCTAssertNil(StatusText.battery(current: 1, maximum: 0, charging: false))

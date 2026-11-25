@@ -36,19 +36,30 @@ struct CFPreferencesStore: PreferenceStore {
         snapshot = saved; hidden = saved.hidden
     }
     var summary: String { hidden.isEmpty ? "Visible" : hidden.count == MacElement.allCases.count ? "Hidden" : "Partly hidden" }
+    /// What the person wants hidden while Mnome runs; Mnome's own bar and dock take the place of these two.
+    private var chosen: Set<MacElement> {
+        get { UserDefaults.standard.stringArray(forKey: Self.chosenKey).map { Set($0.compactMap(MacElement.init(rawValue:))) } ?? [.dock, .menuBar] }
+        set { UserDefaults.standard.set(newValue.map(\.rawValue), forKey: Self.chosenKey) }
+    }
+    private static let chosenKey = "macElementsToHide"
+    func hideChosen() { hide(chosen.subtracting(hidden)) }
+    private func hide(_ elements: Set<MacElement>) {
+        guard !elements.isEmpty else { return }
+        for element in elements { snapshot.capture(element, store: store) }; persist() // originals are on disk before anything is changed
+        for element in elements { snapshot.hide(element, store: store) }
+        finish(Array(elements))
+    }
     func set(_ element: MacElement, hidden hide: Bool) {
+        if hide { chosen.insert(element) } else { chosen.remove(element) }
         guard self.hidden.contains(element) != hide else { return }
-        if hide { snapshot.capture(element, store: store); persist() } // originals are on disk before anything is changed
-        if hide { snapshot.hide(element, store: store) } else { snapshot.restore(element, store: store) }
-        finish([element])
+        if hide { self.hide([element]) } else { snapshot.restore(element, store: store); finish([element]) }
     }
     func setAll(hidden hide: Bool) {
         guard hide else { restoreAll(); return }
-        for element in MacElement.allCases { snapshot.capture(element, store: store) }; persist()
-        for element in MacElement.allCases { snapshot.hide(element, store: store) }
-        finish(MacElement.allCases)
+        chosen = Set(MacElement.allCases); self.hide(chosen)
     }
     func restoreAll(quitting: Bool = false) {
+        if !quitting { chosen = [] } // asked for, so it stays that way at the next launch
         let touched = snapshot.restoreAll(store: store)
         if !touched.isEmpty { finish(MacElement.allCases.filter(touched.contains), quitting: quitting) }
     }
@@ -63,6 +74,10 @@ struct CFPreferencesStore: PreferenceStore {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.changed?() }
     }
     private func applyMenuBar(quitting: Bool) {
+        if #available(macOS 27, *) { // at once and without Automation; not tried on earlier versions
+            DistributedNotificationCenter.default().postNotificationName(NSNotification.Name("AppleInterfaceMenuBarHidingChangedNotification"), object: nil, userInfo: nil, deliverImmediately: true)
+            return
+        }
         let hide = store.get("NSGlobalDomain", "_HIHideMenuBar") == .bool(true)
         var error: NSDictionary?
         NSAppleScript(source: "tell application \"System Events\" to set autohide menu bar of dock preferences to \(hide)")?.executeAndReturnError(&error)

@@ -277,10 +277,10 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
             setShortcut: { [weak self] in self?.applyShortcut($0) }, removeFavorite: { [weak self] in self?.dock.model.remove($0) },
             toggleMacChrome: { [weak self] in guard let self else { return }; self.macChrome.setAll(hidden: self.macChrome.hidden.isEmpty) }, bringBackWindows: { [weak self] in self?.bringBackWindows() })
         ShellUtilities.shared.configure(actions: topBar.actions, model: model, dock: dock.model, macChrome: macChrome)
-        topBar.start()
+        macChrome.hideChosen(); topBar.start()
         windowManager.reserved = { [weak self] screen in
             guard let self else { return (nil, nil) }
-            return (topBar.enabled ? TopBarGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, safeTop: screen.safeAreaInsets.top) : nil, dock.enabled ? DockGeometry.frame(visible: screen.visibleFrame, count: dock.model.items.count + 1) : nil)
+            return (topBar.enabled ? topBar.frame(on: screen) : nil, dock.enabled ? DockGeometry.frame(visible: screen.visibleFrame, count: dock.model.items.count + 1) : nil)
         }
         model.focusWindow = { [weak self] in self?.windowManager.focus(UInt64($0)) ?? false }
         startWindowManager()
@@ -476,6 +476,7 @@ MainActor.assumeIsolated {
  }
  if CommandLine.arguments.contains("--rescue") {
     guard AXIsProcessTrusted() else { print("Mnome needs Accessibility to move windows."); exit(1) }
+    if NSRunningApplication.runningApplications(withBundleIdentifier: "dev.mnome.shell").allSatisfy({ $0.processIdentifier == getpid() }) { MacChromeController().restoreAll(quitting: true) } // a crash leaves the menu bar and Dock hidden
     let given = CommandLine.arguments.firstIndex(of: "--rescue").flatMap { CommandLine.arguments.indices.contains($0 + 1) ? URL(fileURLWithPath: CommandLine.arguments[$0 + 1]) : nil } // a check's own file: only its windows
     let journal = RecoveryJournal(url: given ?? WindowManager.defaultJournal)
     guard journal.acquire() else { print("Mnome is running: use Bring Back All Windows in its menu."); exit(1) }

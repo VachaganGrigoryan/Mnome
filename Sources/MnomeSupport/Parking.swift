@@ -21,8 +21,9 @@ public enum Parking {
 }
 public enum WorkArea {
     /// A screen's usable part between our bar and, when always visible, our dock. Bottom-left coordinates.
-    public static func rect(visible: CGRect, bar: CGRect?, dock: CGRect?) -> CGRect {
-        let top = bar.map { min(visible.maxY, $0.minY) } ?? visible.maxY, bottom = dock.map { max(visible.minY, $0.maxY) } ?? visible.minY
+    /// `screenTop` is where our bar replaces the menu bar: the process that hid it is still told that it takes space.
+    public static func rect(visible: CGRect, bar: CGRect?, dock: CGRect?, screenTop: CGFloat? = nil) -> CGRect {
+        let top = bar.map { $0.maxY == screenTop ? $0.minY : min(visible.maxY, $0.minY) } ?? visible.maxY, bottom = dock.map { max(visible.minY, $0.maxY) } ?? visible.minY
         return CGRect(x: visible.minX, y: bottom, width: visible.width, height: max(1, top - bottom))
     }
     /// Between bottom-left screen coordinates and top-left Accessibility coordinates; its own inverse.

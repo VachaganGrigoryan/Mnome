@@ -3,7 +3,8 @@ import CoreGraphics
 
 
 public enum TopBarGeometry {
-    public static func frame(screen: CGRect, visible: CGRect, safeTop: CGFloat, height: CGFloat = 32) -> CGRect {
+    public static func frame(screen: CGRect, visible: CGRect, safeTop: CGFloat, replacesMenuBar: Bool = false, height: CGFloat = 32) -> CGRect {
+        if replacesMenuBar { let tall = min(max(height, safeTop), screen.height); return CGRect(x: screen.minX, y: screen.maxY - tall, width: screen.width, height: tall) } // beside the notch
         let top = min(visible.maxY, screen.maxY - max(0, safeTop))
         return CGRect(x: screen.minX, y: max(screen.minY, top - height), width: screen.width, height: min(height, screen.height))
     }

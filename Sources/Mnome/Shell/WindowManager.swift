@@ -67,7 +67,7 @@ import MnomeSupport
     func updateDisplays() {
         guard running, let main = NSScreen.screens.first else { return } // the first screen has the menu bar
         let displays = NSScreen.screens.map { screen -> WMDisplay in
-            let ours = reserved(screen), work = WorkArea.rect(visible: screen.visibleFrame, bar: ours.bar, dock: ours.dock)
+            let ours = reserved(screen), work = WorkArea.rect(visible: screen.visibleFrame, bar: ours.bar, dock: ours.dock, screenTop: screen.frame.maxY)
             return WMDisplay(id: Self.displayID(screen), frame: WMRect(WorkArea.flip(screen.frame, primaryHeight: Self.primaryHeight)), work: WMRect(WorkArea.flip(work, primaryHeight: Self.primaryHeight)))
         }
         send(.displays(displays, main: Self.displayID(main)))

@@ -21,6 +21,8 @@ import MnomeSupport
     /// The display whose quick settings were asked for.
     /// The menu open from the bar, as "date-<display>" or "quick-<display>".
     @Published var openMenu: String?
+    /// GNOME's bar turns transparent over the overview.
+    @Published var inOverview = false
     private var monitor: NWPathMonitor?
     private var timer: Timer?
     private var clockTimer: Timer?
@@ -207,7 +209,8 @@ struct TopBarView: View {
                     }
                 }.buttonStyle(PanelButtonStyle(open: status.openMenu == "quick-\(display)")).help(status.network).accessibilityLabel(statusLabel)
             }
-        }.frame(minHeight: 32, maxHeight: .infinity).background(ShellPalette.panel).overlay(alignment: .bottom) { ShellPalette.panelEdge.frame(height: 0.5) }.shellTheme(follows: true)
+        }.frame(minHeight: 32, maxHeight: .infinity).background(status.inOverview ? Color.clear : ShellPalette.panel).overlay(alignment: .bottom) { if !status.inOverview { ShellPalette.panelEdge.frame(height: 0.5) } }
+        .shellTheme(follows: !status.inOverview) // white over the dark overview, in either style
     }
 }
 
@@ -241,7 +244,7 @@ final class TopBarPanel: NSPanel {
             let frame = frame(on: screen)
             let panel = TopBarPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false; panel.level = replacesMenuBar ? NSWindow.Level(rawValue: 24) : .floating // lower, macOS pushes it down; higher, the Mac menus stay out of reach
-            panel.collectionBehavior = [.canJoinAllSpaces, .stationary]; panel.isOpaque = true
+            panel.collectionBehavior = [.canJoinAllSpaces, .stationary]; panel.isOpaque = false; panel.backgroundColor = .clear
             panel.contentView = NSHostingView(rootView: TopBarView(status: status, model: model, dock: dock, macChrome: macChrome, activities: activities, actions: actions, display: WindowManager.displayID(screen), besideNotch: replacesMenuBar ? screen.auxiliaryTopLeftArea?.width : nil, menu: { [weak self] in self?.toggleMenu($0, on: screen) }))
             panel.setFrame(frame, display: true); panel.orderFrontRegardless(); panels.append(panel)
         }

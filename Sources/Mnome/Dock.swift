@@ -127,7 +127,8 @@ struct DockView: View {
 @MainActor final class DockController {
     let model = DockModel()
     var changed: (() -> Void)?
-    var enabled: Bool { UserDefaults.standard.object(forKey: "showDock") as? Bool ?? true }
+    /// Off unless asked for: GNOME's dash lives in the overview.
+    var enabled: Bool { UserDefaults.standard.object(forKey: "showDock") as? Bool ?? false }
     private var panels: [TopBarPanel] = []
     private var displayIDs: [String] = []
     private var observer: NSObjectProtocol?

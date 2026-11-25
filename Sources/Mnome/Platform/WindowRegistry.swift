@@ -195,6 +195,15 @@ private final class Watcher: @unchecked Sendable {
     /// The person may have switched apps while we waited for an answer.
     private func isFront(_ pid: pid_t) -> Bool { running && watchers[pid] != nil && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid }
     /// Presses its close button, so the app can still ask to save.
+    /// The window's own close button, so the app can still ask to save.
+    func close(_ id: UInt64) {
+        guard let window = windows[id] else { return }
+        let ref = window.ref, pid = window.pid
+        Task {
+            guard case let .success(button?) = await client.run(pid, { try ref.value("AXCloseButton") }), CFGetTypeID(button) == AXUIElementGetTypeID() else { return }
+            _ = await client.run(pid) { try (button as! AXUIElement).perform("AXPress") }
+        }
+    }
     func closeFocused() {
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier, watchers[pid] != nil else { return }
         Task {

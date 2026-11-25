@@ -14,7 +14,7 @@ struct QuickSettingsView: View {
     let dismiss: () -> Void
     var endSession: (SessionAction) -> Void = { _ in }
     @AppStorage("showTopBar") private var topBarOn = true
-    @AppStorage("showDock") private var dockOn = true
+    @AppStorage("showDock") private var dockOn = false
     @State private var section: String?
     private func run(_ action: @escaping () -> Void) -> () -> Void { { dismiss(); action() } }
     private func open(_ name: String) { section = section == name ? nil : name }

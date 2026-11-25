@@ -318,7 +318,7 @@ struct PreferencesView: View {
     @ObservedObject var macChrome: MacChromeController
     let actions: QuickActions
     @AppStorage("showTopBar") private var topBarOn = true
-    @AppStorage("showDock") private var dockOn = true
+    @AppStorage("showDock") private var dockOn = false
     @AppStorage("workspaces") private var workspacesOn = true
     @State private var page = "appearance"
     var body: some View {

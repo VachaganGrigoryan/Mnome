@@ -1,68 +1,130 @@
 # Mnome
 
-A GNOME-inspired macOS launcher and window overview, built with a Rust core and a Swift/AppKit host. Requires Apple Silicon, macOS 15+, Xcode and Rust. SIP stays enabled.
+**GNOME Shell on macOS, with SIP on.** Mnome replaces the Mac's menu bar, Dock, Mission Control and desktop with GNOME's top bar, overview, app grid, workspaces and keyboard shortcuts. It is a normal app: quit it and the Mac comes back exactly as it was.
 
-## Build
+![Mnome's top bar](docs/screenshots/top-bar.png)
 
-Run `./scripts/build.sh` from this directory. The locally ad-hoc signed app is `build/Mnome.app`. Launch it in Finder. Cargo dependencies must already be cached for the offline build; otherwise run `cargo fetch --manifest-path core/Cargo.toml` first.
+Apple Silicon, macOS 15 or later (built and tested on macOS 27). Swift/AppKit host, Rust core.
 
-The Swift host owns application discovery, UI, capture and Accessibility objects. Rust ranks application searches and computes overview layouts through a versioned JSON C ABI. Swift copies Rust response bytes and releases them using Rust's free function.
+## What it does
 
-Window previews require Screen Recording permission; window control requires Accessibility permission in System Settings. Application launching remains available without these permissions. Rebuilding with an ad-hoc signature may require granting permissions again. To keep them, create a self-signed *Code Signing* certificate in Keychain Access (Certificate Assistant) and build with `MNOME_SIGN_ID="<certificate name>" ./scripts/build.sh`.
+### Top bar
 
-Only eligible onscreen windows are included. Hidden and minimized windows are excluded. Public APIs cannot reliably join every captured window to an Accessibility window: ambiguous selections activate the owning app instead. Stage Manager and fullscreen behavior require manual verification. Previews are snapshots, not continuous streams.
+- GNOME's 32-point bar on every display, in Adwaita Sans with Adwaita's symbolic icons, light or dark.
+- **Activities** on the left: one dot per workspace, the current one a wide pill; a click toggles the overview.
+- **Clock** in the centre, in GNOME's format and your locale; a click (or Super+V) opens the calendar with the day's events from Calendar.
+- **Status pill** on the right (network, volume, battery) opens **Quick Settings**: screenshot, System Settings, lock, power menu, volume and brightness sliders, Wi-Fi, Bluetooth, Night Light, Dark Style, Keep Awake and Mnome's own settings.
+- Power menu as GNOME's: Restart, Power Off and Log Out ask first and act after 60 seconds.
+- The volume, mute and brightness keys show GNOME's level pill instead of the Mac's.
+- **Run a Command** (Option+F2): an app's name opens it, anything else runs in your shell, `r` restarts Mnome.
+- Or keep the Mac's own menu bar with Mnome's Activities, date and status pill in it (Preferences → Shell → Panels).
 
-## Validation
+### Overview and app grid
 
-- `cargo fmt --manifest-path core/Cargo.toml --check`
-- `cargo clippy --manifest-path core/Cargo.toml --offline --all-targets -- -D warnings`
-- `cargo test --manifest-path core/Cargo.toml --offline`
-- `cargo build --release --manifest-path core/Cargo.toml --offline`, then `swift test` (it links the release core)
-- `./scripts/build.sh`, then `build/Mnome.app/Contents/MacOS/Mnome --self-test`
-- `build/Mnome.app/Contents/MacOS/Mnome --gallery DIR` renders the shell surfaces to PNG without opening windows
-- `open -n -W --stdout FILE build/Mnome.app --args --permissions` writes Mnome's own permissions to FILE
-- `./scripts/live-tests.sh` drives the real macOS for about 4 minutes, keyboard and mouse included, and quits and reopens Mnome as needed. Run it after a macOS update or a change to windows, keys or the bar. Pass names to run some: `1` what macOS allows (parking, capture, the key tap, the bar's place, system controls), `2` the window engine, `apps` the engine on fresh copies of TextEdit, Terminal and VS Code, `3` keys, snapping, workspaces, Alt+Tab and the hot corner in the running app. `drag` (only on request) drags helper windows with the real mouse to check edge tiling. It moves only windows of its own, except that `3` minimizes every window for a moment and checks each returns exactly. `1` switches dark style, Night Light and the menu bar briefly and puts them back, also after being interrupted; `.build/debug/Mnome --system-check rescue` does so by hand. A `skip` line was not tested. The terminal needs Accessibility, and Screen Recording for captures.
+- Windows glide from where they are onto the workspace, drawn on your wallpaper, with the next workspace peeking in; all Core Animation layers on the GPU.
+- Click a window to go to it, drag it onto another workspace to move it, hover for its title and a close button.
+- Type to search apps, open windows, System Settings panes, files (Spotlight) and sums (Return copies the answer).
+- **App grid** in pages (Super+A), with GNOME's **folders**: drop an app on another to make one, rename it, drag apps out.
+- Opens from Right Command, the Activities dots, the hot corner, Ctrl+↑, three fingers up, or Control–Option–Space.
 
-Manual acceptance: launch and dismiss with the keyboard, search and open an app, select a window, deny each permission, close a window during capture, test duplicate titles, multiple displays, mixed scales and fullscreen/Stage Manager. macOS 15 compatibility needs a host running that version. Developer ID signing and notarization are not included.
+### Windows and workspaces
 
-## Window engine
+- A window manager with a Rust core: it decides where windows belong, Swift carries it out and reads every move back.
+- **Workspaces**: windows of other workspaces are parked out of sight, saved to disk first, so none is ever lost (even after a crash).
+- Switching **slides** the screen as GNOME does; a row of dots shows where you are.
+- **Edge tiling**: drag a window to an edge for half the screen, a corner for a quarter, the top to maximize; an accent preview shows where it goes, and dragging away gives its size back.
+- Dragging the edge two tiles share resizes both.
+- **Hot corner**: push the pointer into the top-left corner for the overview.
+- **Alt+Tab / Super+Tab** application switcher; the key above Tab cycles one app's windows.
+- Typing never reaches a hidden window; focus follows you when you choose an app from the Dock or Cmd+Tab.
 
-With Accessibility granted, Mnome tracks every app's standard windows through Accessibility notifications, checks each fact by reading it back, and sweeps every 30 seconds as a backup. The Rust core decides where windows belong (`wm` operation, see `core/README.md`); Swift carries it out, retries, and never waits on an app. Windows on native full screen are left alone and Stage Manager is not supported.
+### Trackpad
 
-Windows of other workspaces are parked in a free bottom corner of the main display. Workspaces are not in the interface yet. Before a window is parked its frame is written to `~/Library/Application Support/Mnome/parked.json`, and the record is deleted only after the window has been read back in sight. Parked windows return when Mnome quits, at the next launch after a crash, through **Bring Back All Windows** (status menu and Preferences → Shell), or with `build/Mnome.app/Contents/MacOS/Mnome --rescue` while Mnome is not running. One copy of Mnome manages windows at a time. While the screen is locked or asleep, or another user is in front, Mnome ignores what macOS reports about windows; afterwards it puts back what macOS moved. A record is deleted only once its window is back in sight, its app has ended, or macOS no longer knows the window, so a window an app closes while parked and opens again returns where it was. An app that does not answer during a switch is asked again later instead of having its windows shown everywhere. Typing never reaches a window out of sight: focus is read back, and on an empty workspace Mnome itself holds the keyboard. When macOS gives the keyboard to a parked window by itself (after a window closes, is minimized or hidden, or its app quits) the workspace stays; when the person chooses it (Dock, Cmd+Tab) the workspace follows. Workspaces turn off by themselves while Stage Manager is on or no display corner is free.
+- Three fingers up open the overview, then the app grid; down go back; sideways switch workspace.
+- The overview and the workspace slide follow your fingers; let go past half way, or flick, to finish.
+- The Mac's own three-, four- and five-finger swipes are off while Mnome runs, so nothing fights.
 
-The engine is tested live (Validation, above).
+### The Mac, replaced or adapted
+
+- **Only Mnome** (on by default) turns off the Dock, menu bar, desktop icons and widgets, Stage Manager, Mission Control, hot corners, window animations and edge tiling while Mnome runs. Preferences → Shell picks each one.
+- **Mnome's desktop**: the wallpaper behind every app; right click for Change Background, Display Settings and Settings.
+- **The Mac's own Dock**, if you keep it: Mnome adds GNOME's **Show Applications** after the separator, and in the overview the Dock slides up as the overview's dash.
+- Ctrl+↑ and Ctrl+↓, the Mac's Mission Control keys, open Mnome's overview and app grid.
+- Mnome warns when a display has more than one Mac desktop (Space) and helps remove the extras.
+
+### Safe to try
+
+- Everything Mnome changes on the Mac is saved first and put back when it quits.
+- After a crash: relaunch and quit Mnome, or run `build/Mnome.app/Contents/MacOS/Mnome --rescue`.
+- **Bring Back All Windows** (status menu, Preferences → Shell) returns every parked window at once.
+- Nothing needs SIP off, a kernel extension or code injected into other apps.
+
+## Screenshots
+
+| Top bar (dark) | Top bar (light) |
+|---|---|
+| ![Top bar, dark](docs/screenshots/top-bar.png) | ![Top bar, light](docs/screenshots/top-bar-light.png) |
+
+| Quick Settings | Calendar | Run a Command |
+|---|---|---|
+| ![Quick Settings](docs/screenshots/quick-settings.png) | ![Calendar](docs/screenshots/date-menu.png) | ![Run a Command](docs/screenshots/run-dialog.png) |
 
 ## Keyboard
 
-Right Command is Super: tapped alone it opens or closes Activities, and with another key it runs GNOME's shortcuts (Keyboard Shortcuts lists them, Preferences → Keyboard changes them or makes Right Option the Super key). Only the listed combinations are taken; every other Right Command combination, and all of Left Command, reaches apps untouched. Shortcuts are physical keys, so they stay in place when the keyboard layout changes. Workspaces: Super+Option+←/→ (or Super+Page Up/Down) switch, with Shift they take the window along, Super+Home/End go to the first and last; a row of dots shows where you are. Option+Tab or Super+Tab switches applications as GNOME does (Shift goes back, the key above Tab cycles one application's windows, Escape cancels, letting go chooses); Preferences → Keyboard chooses all workspaces or the current one only.
+Right Command is **Super** (Preferences → Keyboard can make it Right Option). Only the combinations below are taken; everything else, and all of Left Command, reaches your apps.
 
-Listening needs Accessibility and stops while macOS protects a password field; Control–Option–Space still opens Activities then. No key is stored or logged. Shortcuts act on the window in front, and do nothing when that is a dialog or a window Mnome does not track.
+| Keys | Does |
+|---|---|
+| Super (tap) | Open or close Activities |
+| Super+A | App grid |
+| Super+S / Super+V | Quick Settings / calendar |
+| Super+L | Lock screen |
+| Super+←/→, Super+↑/↓ | Tile left/right, maximize/restore |
+| Super+H, Super+D | Minimize, show desktop |
+| Option+F4 | Close window |
+| Super+Option+←/→ | Previous / next workspace |
+| Super+Option+Shift+←/→ | Move the window to the previous / next workspace |
+| Super+Home / End | First / last workspace |
+| Option+Tab, Super+Tab | Switch applications |
+| Option+Esc | Next window |
+| Option+F2 | Run a Command |
+| Ctrl+↑ / Ctrl+↓ | Overview / app grid |
 
-## Top bar
+The full list is in Mnome's **Keyboard Shortcuts** window.
 
-Mnome displays GNOME's 32-point bar on each display, in place of the Mac menu bar. On the left, the Activities button shows one dot per workspace, the current one a wide pill; it toggles the overview. The centre shows the date and time as GNOME does ("Nov 4  3:15 PM", in your locale's order). The status pill on the right shows network (Wi-Fi strength or wired), volume and battery, or a power icon without a battery, and opens Quick Settings. Text is Adwaita Sans and the icons are Adwaita's symbolic set, both bundled (`Sources/Mnome/Resources/ADWAITA-PROVENANCE.md`). The bar and Quick Settings follow Preferences → Appearance (light or dark, as GNOME 47 does); the dash, overview and switchers stay dark, and Increase Contrast strengthens the highlights. Clicking the clock (or Super+V) opens GNOME's calendar: the month (weeks start as your region does), and the chosen day's events from Calendar, which macOS asks you to allow the first time. Quick Settings follows GNOME: screenshot, System Settings, lock and power buttons; volume and brightness sliders; Wi-Fi, Bluetooth, Night Light, Dark Style and Keep Awake toggles; and a Mnome toggle holding Mnome's own settings. The power menu suspends at once; Restart, Power Off and Log Out ask first and act by themselves after 60 seconds, as GNOME does. The volume, mute and brightness keys show GNOME's level pill instead of the Mac's (Option with them still opens the Mac's settings; outputs without their own volume, and external displays, stay the Mac's). With Only Mnome (Quick Settings → Mnome, on by default) the Mac's Dock, menu bar, desktop icons and widgets, Stage Manager, Mission Control and its gestures, hot corners, window animations and edge tiling are off while Mnome runs, and come back when it quits (or with `--rescue` after a crash); Preferences → Shell turns each one on or off. Left Command+Tab opens Mnome's switcher (Preferences → Keyboard can give it back), and the Launchpad key opens the app grid. Option+F2 (with Fn on a Mac keyboard) opens Run a Command: an application's name opens it, anything else runs in your login shell, Up and Down go through earlier commands, and "r" restarts Mnome. Do Not Disturb and Power Mode are not there: macOS lets apps change neither. Drag a window to the left or right edge to tile it to half the screen, into a corner for a quarter, or to the top to maximize it; an accent-coloured preview shows where it will go, and dragging it away gives it its own size back. Dragging the edge two tiles share resizes both. Pushing the pointer into the top-left corner opens or closes the overview (not over a full-screen app). Switching workspace slides the screen as GNOME does (not with Reduce Motion, or without Screen Recording, which the pictures need). On the trackpad, three fingers up open the overview and then the app grid, down go back, and sideways switch workspace; opening the overview and switching follow the fingers. The Mac's own three-finger swipes are off while Mnome runs (with Mission Control); Three-finger drag, an Accessibility setting, would take these swipes and is left to you. Preferences → Shell turns off Edge Tiling, the Hot Corner and Trackpad Gestures. The app grid has GNOME's folders: drop an app on another to make one, on a folder to add it, and drag it out of the open folder (or use its menu) to take it out; click the name to rename it. It starts with a Utilities folder. With the Mac's desktop hidden, Mnome draws the desktop itself: the wallpaper behind every app, a click there changes nothing, and a right click offers Change Background, Display Settings and Settings. Ctrl+↑ and Ctrl+↓, the Mac's Mission Control keys, open Mnome's overview and app grid; on macOS 27 Mission Control ignores the old switch, so Mnome also turns off its four- and five-finger gestures. Mnome's workspaces live in one Mac desktop (Space) per display: if a display has more, the calendar menu says so and Preferences → Shell → Remove Extra Mac Desktops brings Mission Control back until only one is left. With the Mac Dock shown (Preferences → Shell, Hide Dock off) and Mnome's own dock off, the Mac Dock gets GNOME's Show Applications: last after the Dock's separator, before Trash, it opens Mnome's app grid (or starts Mnome). Minimized windows and launches then animate with the Mac Dock's real icons. Mnome puts the tile back in place at each launch and takes it away when it quits. In the overview the Mac Dock takes the dash's place: it slides up while the overview is open, even with auto-hide on (auto-hide is switched back on when it closes, or at the next launch after a crash), windows stay where they are, and opening an app from it closes the overview. Preferences → Shell → Panels chooses the bar: Mnome's own top bar, or the Mac's menu bar with Mnome's items. With the Mac's menu bar, the app's menus stay on the left (the Apple menu cannot be changed), the Mac's Wi-Fi, Bluetooth, Sound, Battery, Display, Screen Mirroring and user icons are hidden, and Mnome adds GNOME's Activities (the workspace dots; right click for Mnome's menu), the date (the calendar) and the status pill (Quick Settings). The Mac's clock and Control Center icon cannot be hidden: the clock keeps only the time beside Mnome's date. App icons stay, as GNOME's app indicators do. Everything is put back when Mnome quits. Status does not guarantee internet connectivity.
+## Install
 
-## Overview
+You need Xcode and Rust.
 
-Windows and workspaces are Core Animation layers moved on the GPU; SwiftUI draws only the search, results, app grid and dash. `defaults write dev.mnome.shell overviewTiming -bool true` logs each opening's timing, and `.build/debug/Mnome --overview-check` opens and closes the running Mnome's overview and prints them.
+```sh
+cargo fetch --manifest-path core/Cargo.toml   # once, the build is offline
+./scripts/build.sh                            # makes build/Mnome.app
+open build/Mnome.app
+```
 
-Super (Right Command), the Mission Control key, the Activities dots or Control–Option–Space open GNOME's overview on every display: the windows glide from where they are onto the workspace, drawn on your wallpaper, with the next workspace peeking in at the side, the search entry at the top and the dash at the bottom. Click a window to go to it, click the wallpaper to leave, click another workspace to switch to it, or drag a window onto one to move it there; scrolling or swiping, Super+Option+←/→ and Ctrl+←/→ move between workspaces inside the overview, and it stays up until the windows have stopped moving; hovering a window shows its title and a close button. Typing searches applications, open windows, System Settings, files (Spotlight, in your home folder) and sums (Return copies the answer); arrows and Return pick, Escape clears the search and then closes. Super+A or the dash's grid button shows the app grid in pages. The overview takes the keyboard without making Mnome the active app, so closing it leaves you where you were. Window pictures need Screen Recording; without it the overview shows app icons. Other displays show their own windows only, as workspaces are on the main display.
+Grant **Accessibility** (window control, shortcuts) and **Screen Recording** (window pictures, the workspace slide) in System Settings → Privacy & Security. Apps still launch without them.
 
-Use **Show Top Bar** in Quick Settings or Preferences → Shell to hide or restore the bars. They overlay normal application content without reserving workspace or resizing windows. Closing the overview leaves the bars running. Apple’s menu-bar settings are unchanged.
+An ad-hoc signed build may ask for the permissions again after each rebuild. To keep them, create a self-signed *Code Signing* certificate in Keychain Access and build with `MNOME_SIGN_ID="<certificate name>" ./scripts/build.sh`.
 
-Additional manual acceptance: verify bar placement on notched and external displays, display reconnects, visibility persistence across restart, Activities toggling, sleep/wake clock refresh, network changes, battery/charging updates, keyboard access, native menus and fullscreen behavior. GUI checks require an interactive session.
+## Known limits
 
-## Dock and favorites
+- The Apple menu can't be replaced; in the Mac menu bar mode, the Mac's clock and Control Center icon can't be hidden either.
+- Native full-screen windows are left alone; Stage Manager and Mnome's workspaces don't mix (workspaces pause while it is on).
+- Three-finger drag (an Accessibility setting) takes three-finger swipes; turn it off for Mnome's gestures.
+- Window pictures are snapshots, not live video.
+- Mnome uses a few private macOS calls (trackpad, Spaces, Dock auto-hide), looked up at runtime; each has a fallback if a macOS update removes it.
 
-The bottom dock displays favorites followed by other running user applications on each display. First use seeds installed Finder, Safari, Terminal and System Settings. The trailing Show Applications button opens the launcher. Pin to Dash or unpin through application context menus; drag pinned entries to reorder. Favorites and an intentionally empty list persist across restarts. Missing applications remain saved and can be removed through the favorites menu.
+## Development
 
-Click to launch or activate; context menus offer normal Quit for running applications. The dash lives in the overview, as GNOME's. A copy on the desktop is off unless you turn on Dock in Quick Settings → Mnome or Preferences → Shell. The dock overlays content without resizing other windows or modifying Apple's Dock preferences. Overflow scrolls horizontally.
+```sh
+cargo fmt --manifest-path core/Cargo.toml --check
+cargo clippy --manifest-path core/Cargo.toml --offline --all-targets -- -D warnings
+cargo test --manifest-path core/Cargo.toml --offline
+cargo build --release --manifest-path core/Cargo.toml --offline && swift test
+./scripts/build.sh && build/Mnome.app/Contents/MacOS/Mnome --self-test
+./scripts/live-tests.sh        # drives the real Mac for ~4 minutes
+```
 
-Manual acceptance: pin from launcher, reorder favorites, restart, launch/activate/quit, unavailable favorites, multiple processes, overflow, display reconnects and fullscreen coexistence. Interactive checks are required before claiming GUI behavior verified.
+`Mnome --gallery DIR` renders the panels to PNG without opening windows (the pictures above come from it).
 
-## Testing Mnome as the shell
-
-While it runs, Mnome hides Apple's Dock and menu bar and puts its own bar at the top edge, beside the notch; pushing the pointer against the top edge still shows the Mac menus. Preferences → Shell → macOS changes what is hidden, one element at a time (also desktop icons and widgets, and Stage Manager / click-to-show-desktop), and the choice is kept. The **macOS Shell** pill in Quick Settings and Restore All bring everything back and keep it that way.
-
-Original settings come back automatically when Mnome quits normally. If Mnome quits unexpectedly, the saved originals stay on disk: run `build/Mnome.app/Contents/MacOS/Mnome --rescue`, relaunch Mnome and quit it normally, or use **Restore macOS Shell** in the status menu, or Preferences → Shell → Restore All macOS Settings. Before macOS 27, hiding the menu bar asks for Automation (System Events) permission the first time. The Dock, Finder and WindowManager restart briefly when toggled.
+More: [how each part works](docs/GUIDE.md), [the Rust core](core/README.md), [UI guide](docs/UI-GUIDE.md).

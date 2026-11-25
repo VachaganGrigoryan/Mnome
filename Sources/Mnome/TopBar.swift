@@ -22,6 +22,7 @@ import MnomeSupport
     @Published var menuRequest: (id: UUID, display: UInt64)?
     private var monitor: NWPathMonitor?
     private var timer: Timer?
+    private var clockTimer: Timer?
     private var observers: [NSObjectProtocol] = []
     private var powerSource: CFRunLoopSource?
     private var audioDevice = AudioObjectID(kAudioObjectUnknown)
@@ -36,6 +37,7 @@ import MnomeSupport
             Task { @MainActor in self?.network = text; self?.online = online; self?.wifi = wifi; self?.readSignal() }
         }
         monitor.start(queue: DispatchQueue(label: "dev.mnome.network"))
+        tickOnTheMinute()
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in Task { @MainActor in self?.refresh() } }
         for name in [NSLocale.currentLocaleDidChangeNotification, NSNotification.Name.NSSystemTimeZoneDidChange, NSNotification.Name("NSSystemClockDidChangeNotification")] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.refresh() } })
@@ -80,7 +82,17 @@ import MnomeSupport
     }
     /// Signal strength needs no location permission (the network name would).
     private func readSignal() { rssi = wifi ? CWWiFiClient.shared().interface().map { $0.rssiValue() } : nil }
+    /// GNOME's clock changes exactly when the minute does, not up to 30 s later.
+    private func tickOnTheMinute() {
+        let now = Date(), next = (now.timeIntervalSinceReferenceDate / 60).rounded(.down) * 60 + 60
+        let timer = Timer(fire: Date(timeIntervalSinceReferenceDate: next + 0.05), interval: 0, repeats: false) { [weak self] _ in Task { @MainActor in
+            guard let self, self.clockTimer != nil else { return }
+            self.clock = StatusText.clock(Date()); self.tickOnTheMinute()
+        } }
+        timer.tolerance = 0.1; RunLoop.main.add(timer, forMode: .common); clockTimer = timer
+    }
     func stop() {
+        clockTimer?.invalidate(); clockTimer = nil
         timer?.invalidate(); timer = nil; monitor?.cancel(); monitor = nil
         for observer in observers { NotificationCenter.default.removeObserver(observer); NSWorkspace.shared.notificationCenter.removeObserver(observer) }; observers = []
         if let powerSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), powerSource, .commonModes) }; powerSource = nil

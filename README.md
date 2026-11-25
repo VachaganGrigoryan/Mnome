@@ -122,6 +122,8 @@ An ad-hoc signed build may ask for the permissions again after each rebuild. To 
 - Native full-screen windows are left alone; Stage Manager and Mnome's workspaces don't mix (workspaces pause while it is on).
 - Three-finger drag (an Accessibility setting) takes three-finger swipes; turn it off for Mnome's gestures.
 - Window pictures are snapshots, not live video.
+- App menus are read again when the app or the Space changes: a window moved to the other display keeps its titles on the old one until then.
+- Arrow keys do not move inside an open app folder; a key pressed during the workspace slide switches without a slide of its own; a trackpad connected after launch is found at the next wake.
 - Mnome uses a few private macOS calls (trackpad, Spaces, Dock auto-hide), looked up at runtime; each has a fallback if a macOS update removes it.
 
 ## Development
@@ -137,7 +139,7 @@ cargo build --release --manifest-path core/Cargo.toml --offline && swift test
 
 `Mnome --gallery DIR` renders the panels to PNG without opening windows (the panel pictures above come from it).
 
-More: [how each part works](docs/GUIDE.md), [the Rust core](core/README.md), [UI guide](docs/UI-GUIDE.md).
+More: [how each part works](docs/GUIDE.md), [how it is built](docs/ARCHITECTURE.md), [why](docs/DECISIONS.md), [the Rust core](core/README.md), [UI guide](docs/UI-GUIDE.md), [changes](CHANGELOG.md).
 
 ## Licence
 

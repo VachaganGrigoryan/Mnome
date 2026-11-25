@@ -60,7 +60,7 @@ extension Animation {
         let mainHeight = NSScreen.screens.first?.frame.maxY ?? 0
         for (index, screen) in NSScreen.screens.enumerated() {
             let geometry = OverviewGeometry(id: WindowManager.displayID(screen), size: screen.frame.size, origin: CGPoint(x: screen.frame.minX, y: mainHeight - screen.frame.maxY),
-                                            bar: topBar.enabled ? topBar.frame(on: screen).height : screen.safeAreaInsets.top, main: index == 0)
+                                            bar: topBar.enabled ? topBar.frame(on: screen).height : max(screen.safeAreaInsets.top, screen.frame.maxY - screen.visibleFrame.maxY), main: index == 0) // the Mac's menu bar, when it is the bar
             let panel = OverviewPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false; panel.level = NSWindow.Level(rawValue: macDock ? 18 : 20); // under the Mac Dock (20) when it is the dash panel.becomesKeyOnlyIfNeeded = false
             panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false; panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]

@@ -335,7 +335,8 @@ struct PreferencesView: View {
                     case "keyboard": KeyboardPreferences()
                     case "shell":
                         PreferencesGroup(title: "Panels") {
-                            SwitchRow(title: "Show Top Bar", isOn: Binding(get: { topBarOn }, set: { _ in actions.toggleTopBar() }))
+                            CheckRow(title: "Mnome's Top Bar", selected: topBarOn) { if !topBarOn { actions.toggleTopBar() } }
+                            CheckRow(title: "The Mac's Menu Bar, with Mnome's Items", selected: !topBarOn) { if topBarOn { actions.toggleTopBar() } }
                             SwitchRow(title: "Show Dock", isOn: Binding(get: { dockOn }, set: { _ in actions.toggleDock() }))
                         }
                         PreferencesGroup(title: "macOS", footer: "Hidden while Mnome runs. Your original settings return when Mnome quits; if it ever quits unexpectedly, relaunch it and quit normally, or use Restore All.") {

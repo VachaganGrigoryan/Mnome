@@ -35,6 +35,10 @@ public enum StatusText {
         }
         return part("MMMd") + "\u{2003}" + part("jm")
     }
+    /// The clock's date alone ("Nov 4"), for when the time is shown elsewhere.
+    public static func date(_ date: Date, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
+        clock(date, locale: locale, timeZone: timeZone).components(separatedBy: "\u{2003}").first ?? ""
+    }
 }
 /// Adwaita symbolic icon names for the status pill.
 public enum StatusIcons {

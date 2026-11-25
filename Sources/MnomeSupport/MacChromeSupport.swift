@@ -8,7 +8,7 @@ public protocol PreferenceStore {
     func set(_ domain: String, _ key: String, _ value: PrefValue)
 }
 public enum MacElement: String, CaseIterable, Codable {
-    case dock, menuBar, desktop, stageManager, missionControl, hotCorners, animations, tiling
+    case dock, menuBar, desktop, stageManager, missionControl, hotCorners, animations, tiling, statusIcons
     public var title: String {
         switch self {
         case .dock: "Hide Dock"
@@ -19,6 +19,7 @@ public enum MacElement: String, CaseIterable, Codable {
         case .hotCorners: "Disable Hot Corners"
         case .animations: "Turn Off macOS Window Animations"
         case .tiling: "Disable macOS Edge Tiling"
+        case .statusIcons: "Hide the Mac's Status Icons (Mnome's Take Their Place)"
         }
     }
     public struct Setting { public let domain: String, key: String, hidden: PrefValue }
@@ -26,7 +27,7 @@ public enum MacElement: String, CaseIterable, Codable {
     public static let currentHost = "@currentHost"
     /// The process that reads these settings and must restart to see them.
     public var owner: String? {
-        switch self { case .dock, .missionControl, .hotCorners, .animations: "Dock"; case .desktop: "Finder"; case .stageManager, .tiling: "WindowManager"; case .menuBar: nil }
+        switch self { case .dock, .missionControl, .hotCorners, .animations: "Dock"; case .desktop: "Finder"; case .stageManager, .tiling: "WindowManager"; case .statusIcons: "ControlCenter"; case .menuBar: nil }
     }
     public var settings: [Setting] {
         switch self {
@@ -47,6 +48,11 @@ public enum MacElement: String, CaseIterable, Codable {
         case .hotCorners: ["tl", "tr", "bl", "br"].map { Setting(domain: "com.apple.dock", key: "wvous-\($0)-corner", hidden: .int(1)) } // 1 is "no action"
         case .animations: [Setting(domain: "NSGlobalDomain", key: "NSAutomaticWindowAnimationsEnabled", hidden: .bool(false)), Setting(domain: "NSGlobalDomain", key: "NSWindowResizeTime", hidden: .double(0.001)),
                            Setting(domain: "com.apple.dock", key: "launchanim", hidden: .bool(false)), Setting(domain: "com.apple.dock", key: "expose-animation-duration", hidden: .double(0.001))]
+        // Mnome's status pill stands in for these. On macOS 27 the per-Mac number decides (8 is "not in the menu bar");
+        // "NSStatusItem VisibleCC <name>" is only a copy. The clock and Control Center cannot be hidden: the clock keeps
+        // only the time, and Mnome's item shows the date beside it.
+        case .statusIcons: ["WiFi", "Bluetooth", "Sound", "Battery", "Display", "ScreenMirroring", "UserSwitcher", "NowPlaying", "FocusModes"].map { Setting(domain: "com.apple.controlcenter" + MacElement.currentHost, key: $0, hidden: .int(8)) }
+            + [Setting(domain: "com.apple.menuextra.clock", key: "ShowDate", hidden: .int(2)), Setting(domain: "com.apple.menuextra.clock", key: "ShowDayOfWeek", hidden: .bool(false)), Setting(domain: "com.apple.menuextra.clock", key: "ShowSeconds", hidden: .bool(false))]
         case .tiling: ["EnableTilingByEdgeDrag", "EnableTopTilingByEdgeDrag", "EnableTilingOptionAccelerator"].map { Setting(domain: "com.apple.WindowManager", key: $0, hidden: .bool(false)) }
         }
     }

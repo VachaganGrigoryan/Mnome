@@ -36,6 +36,12 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(clock("de_DE"), "4. Nov.\(emSpace)15:15")
         XCTAssertTrue(clock("ja_JP").hasSuffix("\(emSpace)15:15")); XCTAssertTrue(clock("ja_JP").contains("11月4日"))
         XCTAssertFalse(clock("en_US").contains("Wed"))
+        XCTAssertEqual(StatusText.date(date, locale: Locale(identifier: "en_GB"), timeZone: TimeZone(secondsFromGMT: 0)!), "4 Nov")
+    }
+    func testMenusUnderAnItemStayOnTheScreen() {
+        let screen = CGRect(x: 0, y: 0, width: 1512, height: 982), size = CGSize(width: 400, height: 300)
+        XCTAssertEqual(ShellMenusPlacement.origin(.under(CGRect(x: 700, y: 958, width: 60, height: 24)), size: size, anchor: screen), CGPoint(x: 530, y: 654))
+        XCTAssertEqual(ShellMenusPlacement.origin(.under(CGRect(x: 1480, y: 958, width: 30, height: 24)), size: size, anchor: screen).x, 1104, "kept 8 points from the right edge")
     }
     func testStatusIcons() {
         XCTAssertEqual(StatusIcons.battery(percent: 0, charging: false), "battery-level-0-symbolic")

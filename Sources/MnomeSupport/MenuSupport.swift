@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 /// The date menu's month: always six weeks, starting with at least one day of the month before, as GNOME's calendar.
 public struct MonthGrid: Equatable {
@@ -69,6 +70,22 @@ public enum SessionAction: String, CaseIterable, Sendable {
         case .restart: return "The system will restart automatically in \(s)."
         case .powerOff: return "The system will power off automatically in \(s)."
         case .logOut: return "You will be logged out automatically in \(s)."
+        }
+    }
+}
+
+/// Where a shell menu goes. `anchor` is the bar, or the screen, in AppKit coordinates (origin bottom left).
+/// `at`: the top-left corner at a point, as a right-click menu. `under`: centred below a menu bar item.
+public enum MenuPlace: Equatable, Sendable { case center, trailing, middle, at(CGPoint), under(CGRect) }
+public enum ShellMenusPlacement {
+    /// Both point-anchored places are kept on the screen.
+    public static func origin(_ place: MenuPlace, size: CGSize, anchor: CGRect) -> CGPoint {
+        switch place {
+        case .center: return CGPoint(x: anchor.midX - size.width / 2, y: anchor.minY - 8 - size.height)
+        case .trailing: return CGPoint(x: anchor.maxX - size.width - 8, y: anchor.minY - 8 - size.height)
+        case .middle: return CGPoint(x: anchor.midX - size.width / 2, y: anchor.midY - size.height / 2 + anchor.height * 0.1)
+        case let .at(p): return CGPoint(x: min(max(anchor.minX, p.x), anchor.maxX - size.width), y: min(max(anchor.minY, p.y - size.height), anchor.maxY - size.height))
+        case let .under(item): return CGPoint(x: min(max(anchor.minX + 8, item.midX - size.width / 2), anchor.maxX - size.width - 8), y: item.minY - 4 - size.height)
         }
     }
 }

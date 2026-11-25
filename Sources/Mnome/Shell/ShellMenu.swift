@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import MnomeSupport
 
 /// GNOME's panel menus: a rounded box under the bar with no arrow. It takes the keyboard without making Mnome
 /// the active app, so closing it leaves the person where they were.
@@ -15,15 +16,13 @@ final class ShellMenuPanel: NSPanel {
     private var clicks: Any?
     private(set) var open: String?
     var changed: (String?) -> Void = { _ in }
-    /// `at`: the menu's top-left corner at a point, as a right-click menu; kept on the screen.
-    enum Place: Equatable { case center, trailing, middle, at(CGPoint) }
+    typealias Place = MenuPlace
     /// `anchor` is the bar (or screen) frame, in AppKit screen coordinates.
     func show(_ id: String, in anchor: CGRect, place: Place, _ content: some View) {
         close()
         let host = NSHostingView(rootView: content.fixedSize()), size = host.fittingSize
-        var x: CGFloat = switch place { case .center, .middle: anchor.midX - size.width / 2; case .trailing: anchor.maxX - size.width - 8; case let .at(p): p.x }
-        var y: CGFloat = switch place { case .middle: anchor.midY - size.height / 2 + anchor.height * 0.1; case let .at(p): p.y - size.height; default: anchor.minY - 8 - size.height }
-        if case .at = place { x = min(max(anchor.minX, x), anchor.maxX - size.width); y = min(max(anchor.minY, y), anchor.maxY - size.height) }
+        let origin = ShellMenusPlacement.origin(place, size: size, anchor: anchor)
+        let (x, y) = (origin.x, origin.y)
         let panel = ShellMenuPanel(contentRect: CGRect(x: x, y: y, width: size.width, height: size.height), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false; panel.level = NSWindow.Level(rawValue: 28) // above the bar; panel.becomesKeyOnlyIfNeeded = false
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true; panel.collectionBehavior = [.canJoinAllSpaces, .transient]

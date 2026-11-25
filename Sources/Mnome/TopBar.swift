@@ -254,8 +254,10 @@ final class TopBarPanel: NSPanel {
     func focus() { panels.first?.takeKeyboard() }
     let menus = ShellMenus(), agenda = Agenda(), controls = SystemControls()
     /// On the display under the pointer.
-    func toggleQuickSettings() { if let screen = pointerScreen { toggleMenu("quick", on: screen) } }
-    func toggleDateMenu() { if let screen = pointerScreen { toggleMenu("date", on: screen) } }
+    func toggleQuickSettings() { if let item = itemFrame("quick") { toggleMenu("quick", under: item) } else if let screen = pointerScreen { toggleMenu("quick", on: screen) } }
+    func toggleDateMenu() { if let item = itemFrame("date") { toggleMenu("date", under: item) } else if let screen = pointerScreen { toggleMenu("date", on: screen) } }
+    /// In the Mac's menu bar: where Mnome's item for a menu is, in screen coordinates.
+    var itemFrame: (String) -> CGRect? = { _ in nil }
     private var pointerScreen: NSScreen? { enabled ? NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main : nil }
     /// Suspend acts at once; the others ask on the main display, with GNOME's countdown.
     func endSession(_ action: SessionAction) {
@@ -267,12 +269,17 @@ final class TopBarPanel: NSPanel {
         guard let screen = NSScreen.screens.first else { return }
         menus.toggle("run", in: screen.frame, place: .middle, RunDialogView(close: { [weak self] in self?.menus.close() }).shellTheme(follows: true))
     }
-    func toggleMenu(_ kind: String, on screen: NSScreen) {
+    /// Under one of Mnome's items in the Mac's menu bar.
+    func toggleMenu(_ kind: String, under item: CGRect) {
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(CGPoint(x: item.midX, y: item.midY)) }) ?? NSScreen.main else { return }
+        toggleMenu(kind, on: screen, place: .under(item), anchor: screen.frame)
+    }
+    func toggleMenu(_ kind: String, on screen: NSScreen, place: ShellMenus.Place? = nil, anchor: CGRect? = nil) {
         guard let model, let dock, let macChrome else { return }
         menus.changed = { [weak self] in self?.status.openMenu = $0 }
-        let id = "\(kind)-\(WindowManager.displayID(screen))", bar = frame(on: screen)
-        if kind == "date" { menus.toggle(id, in: bar, place: .center, DateMenuView(agenda: agenda).shellTheme(follows: true)) }
-        else { menus.toggle(id, in: bar, place: .trailing, QuickSettingsView(status: status, controls: controls, model: model, dock: dock, macChrome: macChrome, actions: actions, dismiss: { [weak self] in self?.menus.close() }, endSession: { [weak self] in self?.endSession($0) }).shellTheme(follows: true)) }
+        let id = "\(kind)-\(WindowManager.displayID(screen))", bar = anchor ?? frame(on: screen)
+        if kind == "date" { menus.toggle(id, in: bar, place: place ?? .center, DateMenuView(agenda: agenda).shellTheme(follows: true)) }
+        else { menus.toggle(id, in: bar, place: place ?? .trailing, QuickSettingsView(status: status, controls: controls, model: model, dock: dock, macChrome: macChrome, actions: actions, dismiss: { [weak self] in self?.menus.close() }, endSession: { [weak self] in self?.endSession($0) }).shellTheme(follows: true)) }
     }
     func stop() {
         if let observer { NotificationCenter.default.removeObserver(observer) }; observer = nil

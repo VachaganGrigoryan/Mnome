@@ -2,6 +2,9 @@ import AppKit
 import SwiftUI
 import Network
 import IOKit.ps
+import CoreAudio
+import AudioToolbox
+import CoreWLAN
 import MnomeSupport
 
 @MainActor final class BarStatus: ObservableObject {
@@ -10,19 +13,27 @@ import MnomeSupport
     @Published var batteryPercent: Int?
     @Published var charging = false
     @Published var network = "Checking network connection"
+    @Published var online = true
+    @Published var wifi = false
+    @Published var rssi: Int?
+    @Published var volume: (level: Double, muted: Bool)?
+    @Published var workspaces = BarWorkspaces()
     /// The display whose quick settings were asked for.
     @Published var menuRequest: (id: UUID, display: UInt64)?
     private var monitor: NWPathMonitor?
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
     private var powerSource: CFRunLoopSource?
+    private var audioDevice = AudioObjectID(kAudioObjectUnknown)
+    private lazy var audioChanged: AudioObjectPropertyListenerBlock = { [weak self] _, _ in Task { @MainActor in self?.readVolume() } }
+    private lazy var deviceChanged: AudioObjectPropertyListenerBlock = { [weak self] _, _ in Task { @MainActor in self?.followOutputDevice() } }
     func start() {
         stop(); refresh()
         let monitor = NWPathMonitor(); self.monitor = monitor
         monitor.pathUpdateHandler = { [weak self] path in
             let kind = path.usesInterfaceType(.wifi) ? "Wi-Fi" : path.usesInterfaceType(.wiredEthernet) ? "Ethernet" : path.usesInterfaceType(.cellular) ? "Cellular" : "Network"
-            let text = StatusText.network(available: path.status == .satisfied, kind: kind)
-            Task { @MainActor in self?.network = text }
+            let text = StatusText.network(available: path.status == .satisfied, kind: kind), online = path.status == .satisfied, wifi = path.usesInterfaceType(.wifi)
+            Task { @MainActor in self?.network = text; self?.online = online; self?.wifi = wifi; self?.readSignal() }
         }
         monitor.start(queue: DispatchQueue(label: "dev.mnome.network"))
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in Task { @MainActor in self?.refresh() } }
@@ -37,14 +48,48 @@ import MnomeSupport
         }, Unmanaged.passUnretained(self).toOpaque())?.takeRetainedValue() {
             powerSource = source; CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         }
+        var defaultOutput = Self.address(kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal)
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &defaultOutput, .main, deviceChanged)
+        followOutputDevice()
     }
+    private static func address(_ selector: AudioObjectPropertySelector, _ scope: AudioObjectPropertyScope = kAudioDevicePropertyScopeOutput) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+    }
+    /// Volume and mute are watched on the current output device; a new default device moves the watch.
+    private func followOutputDevice() {
+        watchAudio(false)
+        var device = AudioObjectID(kAudioObjectUnknown), size = UInt32(MemoryLayout<AudioObjectID>.size), address = Self.address(kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal)
+        if AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device) != noErr { device = AudioObjectID(kAudioObjectUnknown) }
+        audioDevice = device; watchAudio(true); readVolume()
+    }
+    private func watchAudio(_ on: Bool) {
+        guard audioDevice != kAudioObjectUnknown else { return }
+        for selector in [kAudioHardwareServiceDeviceProperty_VirtualMainVolume, kAudioDevicePropertyMute] {
+            var address = Self.address(selector)
+            guard AudioObjectHasProperty(audioDevice, &address) else { continue }
+            if on { AudioObjectAddPropertyListenerBlock(audioDevice, &address, .main, audioChanged) } else { AudioObjectRemovePropertyListenerBlock(audioDevice, &address, .main, audioChanged) }
+        }
+    }
+    private func readVolume() {
+        var level = Float32(0), muted = UInt32(0), size = UInt32(MemoryLayout<Float32>.size)
+        var address = Self.address(kAudioHardwareServiceDeviceProperty_VirtualMainVolume)
+        guard audioDevice != kAudioObjectUnknown, AudioObjectGetPropertyData(audioDevice, &address, 0, nil, &size, &level) == noErr else { volume = nil; return } // no adjustable output
+        address = Self.address(kAudioDevicePropertyMute); size = UInt32(MemoryLayout<UInt32>.size)
+        if AudioObjectGetPropertyData(audioDevice, &address, 0, nil, &size, &muted) != noErr { muted = 0 }
+        volume = (Double(level), muted != 0)
+    }
+    /// Signal strength needs no location permission (the network name would).
+    private func readSignal() { rssi = wifi ? CWWiFiClient.shared().interface().map { $0.rssiValue() } : nil }
     func stop() {
         timer?.invalidate(); timer = nil; monitor?.cancel(); monitor = nil
         for observer in observers { NotificationCenter.default.removeObserver(observer); NSWorkspace.shared.notificationCenter.removeObserver(observer) }; observers = []
         if let powerSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), powerSource, .commonModes) }; powerSource = nil
+        var defaultOutput = Self.address(kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal)
+        AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &defaultOutput, .main, deviceChanged)
+        watchAudio(false); audioDevice = AudioObjectID(kAudioObjectUnknown)
     }
     func refresh() {
-        clock = StatusText.clock(Date()); battery = nil; batteryPercent = nil; charging = false
+        clock = StatusText.clock(Date()); readSignal(); battery = nil; batteryPercent = nil; charging = false
         guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(), let sources = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] else { return }
         for source in sources {
             guard let description = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue() as? [String: Any], description[kIOPSTypeKey] as? String == kIOPSInternalBatteryType else { continue }
@@ -64,6 +109,44 @@ struct QuickActions {
     var setShortcut: (ShortcutChoice) -> Void = { _ in }, removeFavorite: (String) -> Void = { _ in }, toggleMacChrome: () -> Void = {}, bringBackWindows: () -> Void = {}
 }
 
+struct BarWorkspaces: Equatable { var count = 1, current = 0, on = false }
+
+/// GNOME's `#panel .panel-button`: a pill inside a 3 px transparent border, ink at 17% hover, 28% pressed or open, 32% both.
+struct PanelButtonStyle: ButtonStyle {
+    var open = false
+    func makeBody(configuration: Configuration) -> some View { PanelButtonBody(configuration: configuration, open: open) }
+}
+private struct PanelButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let open: Bool
+    @State private var hover = false
+    @Environment(\.isFocused) private var focused
+    @Environment(\.colorSchemeContrast) private var contrast
+    private var ink: CGFloat {
+        let down = configuration.isPressed || open, level: CGFloat = down ? (hover ? 0.32 : 0.28) : hover || focused ? 0.17 : 0
+        return level == 0 ? 0 : level + (contrast == .increased ? 0.13 : 0)
+    }
+    var body: some View {
+        configuration.label.padding(.horizontal, 12).frame(maxHeight: .infinity)
+            .background(Capsule().fill(ShellPalette.ink(ink)))
+            .overlay(Capsule().stroke(focused ? ShellPalette.toggleOn : contrast == .increased ? ShellPalette.ink(0.6) : .clear, lineWidth: 2))
+            .contentShape(Capsule()).padding(3).onHover { hover = $0 }.animation(.easeOut(duration: 0.15), value: ink)
+    }
+}
+/// The Activities button: GNOME 45's workspace dots.
+struct WorkspaceDotsView: View {
+    let workspaces: BarWorkspaces
+    @Environment(\.colorSchemeContrast) private var contrast
+    var body: some View {
+        HStack(spacing: WorkspaceDots.spacing) {
+            ForEach(Array(WorkspaceDots.dots(count: workspaces.count, current: workspaces.current, on: workspaces.on).enumerated()), id: \.offset) { _, current in
+                let size = current ? WorkspaceDots.active : WorkspaceDots.inactive
+                Capsule().fill(ShellPalette.text.opacity(current || contrast == .increased ? 1 : 0.5)).frame(width: size.width, height: size.height)
+            }
+        }.animation(.timingCurve(0.33, 1, 0.68, 1, duration: 0.25), value: workspaces) // ease-out-cubic, as GNOME's workspace switch
+    }
+}
+
 struct TopBarView: View {
     @ObservedObject var status: BarStatus
     @ObservedObject var model: Model
@@ -75,27 +158,28 @@ struct TopBarView: View {
     /// The width left of the notch, where the clock goes instead of behind it.
     var besideNotch: CGFloat?
     @State private var showingMenu = false
-    private var statusLabel: String { "System status and Mnome settings, \(status.battery ?? "No battery"), \(status.network)" }
+    private var statusLabel: String { "System status and Mnome settings, \(status.battery ?? "No battery"), \(status.network)" + (status.volume.map { $0.muted ? ", muted" : ", volume \(Int(($0.level * 100).rounded()))%" } ?? "") }
     var body: some View {
         ZStack {
-            Text(status.clock).font(.callout.weight(.semibold)).accessibilityLabel("Date and time, \(status.clock)")
+            Text(status.clock).font(.adwaita(14.667, .bold)).monospacedDigit().lineLimit(1).accessibilityLabel("Date and time, \(status.clock)")
                 .frame(width: besideNotch.map { max(0, $0 - 12) }, alignment: .trailing).frame(maxWidth: .infinity, alignment: besideNotch == nil ? .center : .leading)
-            HStack {
-                Button(action: activities) { Text("Activities").font(.callout.weight(.semibold)).padding(.horizontal, 12).padding(.vertical, 3) }
-                    .buttonStyle(ShellButtonStyle()).accessibilityHint("Open or close the window overview")
+            HStack(spacing: 0) {
+                Button(action: activities) { WorkspaceDotsView(workspaces: status.workspaces) }
+                    .buttonStyle(PanelButtonStyle()).accessibilityLabel(WorkspaceDots.label(count: status.workspaces.count, current: status.workspaces.current, on: status.workspaces.on)).accessibilityHint("Open or close the window overview")
                 Spacer()
                 Button { showingMenu.toggle() } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: status.network == "No network connection" ? "network.slash" : "network")
-                        if let percent = status.batteryPercent { Image(systemName: StatusText.batterySymbol(percent: percent, charging: status.charging)) }
-                        Image(systemName: "power")
-                    }.font(.callout).padding(.horizontal, 12).padding(.vertical, 3)
-                }.buttonStyle(ShellButtonStyle()).help(status.network).accessibilityLabel(statusLabel)
+                    HStack(spacing: 12) {
+                        AdwaitaIcon(name: StatusIcons.network(available: status.online, wifi: status.wifi, rssi: status.rssi), fallback: status.online ? "network" : "network.slash")
+                        if let volume = status.volume { AdwaitaIcon(name: StatusIcons.volume(level: volume.level, muted: volume.muted), fallback: volume.muted ? "speaker.slash" : "speaker.wave.2") }
+                        if let percent = status.batteryPercent { AdwaitaIcon(name: StatusIcons.battery(percent: percent, charging: status.charging), fallback: StatusText.batterySymbol(percent: percent, charging: status.charging)) }
+                        else { AdwaitaIcon(name: "system-shutdown-symbolic", fallback: "power") }
+                    }
+                }.buttonStyle(PanelButtonStyle(open: showingMenu)).help(status.network).accessibilityLabel(statusLabel)
                 .popover(isPresented: $showingMenu, arrowEdge: .bottom) {
-                    QuickSettingsView(status: status, model: model, dock: dock, macChrome: macChrome, actions: actions, dismiss: { showingMenu = false }).shellTheme()
+                    QuickSettingsView(status: status, model: model, dock: dock, macChrome: macChrome, actions: actions, dismiss: { showingMenu = false }).shellTheme(follows: true)
                 }
-            }.padding(.horizontal, 8)
-        }.foregroundStyle(.white).frame(minHeight: 32, maxHeight: .infinity).background(ShellPalette.panel).shellTheme()
+            }
+        }.frame(minHeight: 32, maxHeight: .infinity).background(ShellPalette.panel).overlay(alignment: .bottom) { ShellPalette.panelEdge.frame(height: 0.5) }.shellTheme(follows: true)
         .onChange(of: status.menuRequest?.id) { _, _ in if status.menuRequest?.display == display { showingMenu.toggle() } }
     }
 }
@@ -166,7 +250,7 @@ struct QuickSettingsView: View {
                         .accessibilityLabel("Remove \(favorite.name) from favorites")
                 } } }
             }
-            Divider().overlay(Color.white.opacity(0.15))
+            Divider().overlay(ShellPalette.ink(0.15))
             VStack(spacing: 2) {
                 row("Open Mnome", actions.openMnome); row("Focus Dock", actions.focusDock); row("Focus Top Bar", actions.focusTopBar)
             }

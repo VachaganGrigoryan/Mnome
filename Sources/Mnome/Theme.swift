@@ -31,17 +31,24 @@ enum ThemePalette {
     static let dim = Color.primary.opacity(0.55)
 }
 
-/// GNOME Shell surfaces are always dark, whatever the Appearance choice.
+/// GNOME Shell tokens (`gnome-ref/theme/shell-{dark,light}.css`). The panel and popovers follow the Appearance choice,
+/// as GNOME 47+ does; the overview, dash and switchers stay dark in both styles.
 enum ShellPalette {
-    static let panel = Color.black
-    static let overview = Color(nsColor: hex(0x1e1e1e, 0.95))
-    static let dash = Color(nsColor: hex(0x2e2e33, 0.92))
-    static let popover = Color(nsColor: hex(0x2a2a2a))
-    static let toggle = Color.white.opacity(0.10)
+    static let panel = adaptive(hex(0xfafafb), .black)
+    static let text = adaptive(hex(0x222226), .white)
+    static let panelEdge = adaptive(hex(0x222226, 0.1), .clear)
+    static let popover = adaptive(hex(0xfafafb), hex(0x36363a))
+    static let popoverBorder = adaptive(hex(0xe6e6eb), hex(0x424247))
+    static let overview = Color(nsColor: hex(0x222226))
+    static let dash = Color(nsColor: hex(0x38383b))
+    static let switcher = Color(nsColor: hex(0x2e2e33))
+    /// The panel's ink (`#222226` light, white dark) at GNOME's overlay strengths: hover 17%, pressed 28%, pressed and hovered 32%.
+    static func ink(_ alpha: CGFloat) -> Color { adaptive(hex(0x222226, alpha), NSColor(white: 1, alpha: alpha)) }
+    static let toggle = ink(0.10)
     static let toggleOn = Color(nsColor: hex(0x3584e4))
-    static let hover = Color.white.opacity(0.10)
-    static let pressed = Color.white.opacity(0.17)
-    static let dim = Color.white.opacity(0.6)
+    static let hover = ink(0.17)
+    static let pressed = ink(0.28)
+    static let dim = ink(0.6)
     static let destructive = Color(nsColor: hex(0xc01c28))
 }
 
@@ -50,11 +57,16 @@ struct MnomeTheme: ViewModifier {
     func body(content: Content) -> some View { content.preferredColorScheme(settings.scheme).tint(ThemePalette.accent) }
 }
 struct ShellTheme: ViewModifier {
-    func body(content: Content) -> some View { content.preferredColorScheme(.dark).tint(ShellPalette.toggleOn).foregroundStyle(.white) }
+    @ObservedObject var settings = AppearanceSettings.shared
+    let follows: Bool
+    func body(content: Content) -> some View {
+        content.preferredColorScheme(follows ? settings.scheme : .dark).tint(ShellPalette.toggleOn).foregroundStyle(ShellPalette.text)
+    }
 }
 extension View {
     func mnomeTheme() -> some View { modifier(MnomeTheme()) }
-    func shellTheme() -> some View { modifier(ShellTheme()) }
+    /// `follows`: the panel and its popovers, light or dark with the Appearance choice; everything else stays dark.
+    func shellTheme(follows: Bool = false) -> some View { modifier(ShellTheme(follows: follows)) }
 }
 
 // MARK: Buttons
@@ -108,7 +120,7 @@ private struct ShellButtonBody: View {
         configuration.label
             .background(configuration.isPressed ? ShellPalette.pressed : hover ? ShellPalette.hover : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: radius))
-            .overlay(RoundedRectangle(cornerRadius: radius).stroke(focused ? ShellPalette.toggleOn : contrast == .increased ? Color.white.opacity(0.6) : Color.clear, lineWidth: 2))
+            .overlay(RoundedRectangle(cornerRadius: radius).stroke(focused ? ShellPalette.toggleOn : contrast == .increased ? ShellPalette.ink(0.6) : Color.clear, lineWidth: 2))
             .opacity(enabled ? 1 : 0.5).onHover { hover = $0 }
     }
 }

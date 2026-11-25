@@ -121,7 +121,7 @@ struct DockView: View {
                 Button { model.showApps?() } label: { Image(systemName: "square.grid.3x3.fill").font(.system(size: 24)).frame(width: 48, height: 48).padding(4) }
                     .buttonStyle(ShellButtonStyle(radius: 12)).help("Show Applications").accessibilityLabel("Show Applications")
             }.padding(.horizontal, 12).padding(.vertical, 6)
-        }.onDrop(of: [UTType.text], delegate: DockDragExit(dragging: $dragging)).scrollIndicators(.hidden).background(ShellPalette.dash).clipShape(RoundedRectangle(cornerRadius: 24)).shellTheme()
+        }.onDrop(of: [UTType.text], delegate: DockDragExit(dragging: $dragging)).scrollIndicators(.never).background(ShellPalette.dash).clipShape(RoundedRectangle(cornerRadius: 24)).shellTheme() // .hidden still draws the track with a mouse attached or "Always" scroll bars
     }
 }
 @MainActor final class DockController {

@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import ScreenCaptureKit
 import Carbon
+import Combine
 import CMnome
 import MnomeSupport
 
@@ -236,6 +237,7 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
     let macChrome = MacChromeController()
     let windowManager = WindowManager()
     let switcher = SwitcherController(), workspacePopup = WorkspacePopup()
+    private var workspaceWatch: AnyCancellable?
     let model = Model(); var panel: NSPanel?; var panels: [NSPanel] = []; var status: NSStatusItem!; var hotkey: EventHotKeyRef?; var previous: NSRunningApplication?
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory); model.shortcutTitle = UserDefaults.standard.string(forKey: "shortcutTitle") ?? "Control–Option–Space"; model.discover(); model.close = { [weak self] in self?.dismiss(reactivate: $0) }
@@ -277,7 +279,12 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
             setShortcut: { [weak self] in self?.applyShortcut($0) }, removeFavorite: { [weak self] in self?.dock.model.remove($0) },
             toggleMacChrome: { [weak self] in guard let self else { return }; self.macChrome.setAll(hidden: self.macChrome.hidden.isEmpty) }, bringBackWindows: { [weak self] in self?.bringBackWindows() })
         ShellUtilities.shared.configure(actions: topBar.actions, model: model, dock: dock.model, macChrome: macChrome)
-        macChrome.hideChosen(); topBar.start()
+        Adwaita.registerFont(); macChrome.hideChosen(); topBar.start()
+        workspaceWatch = windowManager.$state.sink { [weak self] state in
+            guard let self, let state else { return }
+            let now = BarWorkspaces(count: state.workspaces.count, current: state.workspaces.firstIndex(of: state.current) ?? 0, on: state.workspacesOn)
+            if self.topBar.status.workspaces != now { self.topBar.status.workspaces = now }
+        }
         windowManager.reserved = { [weak self] screen in
             guard let self else { return (nil, nil) }
             return (topBar.enabled ? topBar.frame(on: screen) : nil, dock.enabled ? DockGeometry.frame(visible: screen.visibleFrame, count: dock.model.items.count + 1) : nil)
@@ -468,6 +475,12 @@ MainActor.assumeIsolated {
     guard prefs.get(domain, "b") == .bool(true), prefs.get(domain, "i") == .int(7), prefs.get(domain, "d") == .double(1000), prefs.get(domain, "s") == .string("x") else { fatalError("Preference store round trip failed") }
     for key in ["b", "i", "d", "s"] { prefs.set(domain, key, .absent) }
     guard prefs.get(domain, "b") == .absent else { fatalError("Preference store must delete absent keys") }
+    MainActor.assumeIsolated {
+        Adwaita.registerFont(); guard Adwaita.fontReady else { fatalError("Adwaita Sans did not register") }
+        for name in ["network-wired-symbolic", "audio-volume-muted-symbolic", "battery-level-100-charged-symbolic", "system-shutdown-symbolic", StatusIcons.network(available: true, wifi: true, rssi: -70), StatusIcons.battery(percent: 37, charging: true)] {
+            guard let icon = Adwaita.icon(name), icon.size.width > 0 else { fatalError("Missing Adwaita icon \(name)") }
+        }
+    }
     print("Mnome bridge self-test passed"); exit(0)
  }
  if CommandLine.arguments.contains("--permissions") {

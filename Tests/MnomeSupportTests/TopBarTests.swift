@@ -27,9 +27,41 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(StatusText.network(available: true, kind: "Wi-Fi"), "Wi-Fi connected")
         XCTAssertEqual(StatusText.network(available: false, kind: "Wi-Fi"), "No network connection")
     }
-    func testClockUsesGivenLocaleAndZone() {
-        let result = StatusText.clock(Date(timeIntervalSince1970: 0), locale: Locale(identifier: "en_US"), timeZone: TimeZone(secondsFromGMT: 0)!)
-        XCTAssertTrue(result.contains("Jan")); XCTAssertTrue(result.contains("12:00"))
+    func testClockLooksLikeGnomeInEachLocale() {
+        let date = Date(timeIntervalSince1970: 26_579_700) // 4 Nov 1970, 15:15 UTC
+        func clock(_ id: String) -> String { StatusText.clock(date, locale: Locale(identifier: id), timeZone: TimeZone(secondsFromGMT: 0)!)}
+        let emSpace = "\u{2003}"
+        XCTAssertEqual(clock("en_US"), "Nov 4\(emSpace)3:15 PM")
+        XCTAssertEqual(clock("en_GB"), "4 Nov\(emSpace)15:15")
+        XCTAssertEqual(clock("de_DE"), "4. Nov.\(emSpace)15:15")
+        XCTAssertTrue(clock("ja_JP").hasSuffix("\(emSpace)15:15")); XCTAssertTrue(clock("ja_JP").contains("11月4日"))
+        XCTAssertFalse(clock("en_US").contains("Wed"))
+    }
+    func testStatusIcons() {
+        XCTAssertEqual(StatusIcons.battery(percent: 0, charging: false), "battery-level-0-symbolic")
+        XCTAssertEqual(StatusIcons.battery(percent: 44, charging: false), "battery-level-40-symbolic")
+        XCTAssertEqual(StatusIcons.battery(percent: 45, charging: true), "battery-level-50-charging-symbolic")
+        XCTAssertEqual(StatusIcons.battery(percent: 97, charging: true), "battery-level-100-charged-symbolic")
+        XCTAssertEqual(StatusIcons.battery(percent: 140, charging: false), "battery-level-100-symbolic")
+        XCTAssertEqual(StatusIcons.network(available: false, wifi: true, rssi: -40), "network-offline-symbolic")
+        XCTAssertEqual(StatusIcons.network(available: true, wifi: false, rssi: nil), "network-wired-symbolic")
+        XCTAssertEqual(StatusIcons.network(available: true, wifi: true, rssi: nil), "network-wireless-signal-excellent-symbolic")
+        XCTAssertEqual(StatusIcons.network(available: true, wifi: true, rssi: -70), "network-wireless-signal-ok-symbolic")
+        XCTAssertEqual(StatusIcons.network(available: true, wifi: true, rssi: -95), "network-wireless-signal-none-symbolic")
+        XCTAssertEqual(StatusIcons.volume(level: 0.5, muted: true), "audio-volume-muted-symbolic")
+        XCTAssertEqual(StatusIcons.volume(level: 0, muted: false), "audio-volume-muted-symbolic")
+        XCTAssertEqual(StatusIcons.volume(level: 0.2, muted: false), "audio-volume-low-symbolic")
+        XCTAssertEqual(StatusIcons.volume(level: 0.5, muted: false), "audio-volume-medium-symbolic")
+        XCTAssertEqual(StatusIcons.volume(level: 1, muted: false), "audio-volume-high-symbolic")
+    }
+    func testWorkspaceDots() {
+        XCTAssertEqual(WorkspaceDots.dots(count: 3, current: 1, on: true), [false, true, false])
+        XCTAssertEqual(WorkspaceDots.dots(count: 3, current: 1, on: false), [true])
+        XCTAssertEqual(WorkspaceDots.dots(count: 1, current: 0, on: true), [true])
+        XCTAssertEqual(WorkspaceDots.dots(count: 0, current: 0, on: true), [true])
+        XCTAssertEqual(WorkspaceDots.dots(count: 2, current: 9, on: true), [false, true])
+        XCTAssertEqual(WorkspaceDots.label(count: 3, current: 1, on: true), "Activities, workspace 2 of 3")
+        XCTAssertEqual(WorkspaceDots.label(count: 3, current: 1, on: false), "Activities")
     }
 }
 final class QuickSettingsSupportTests: XCTestCase {

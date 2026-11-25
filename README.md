@@ -41,7 +41,7 @@ Listening needs Accessibility and stops while macOS protects a password field; C
 
 ## Top bar
 
-Mnome displays a 32-point GNOME-inspired bar beneath the native menu/notch region on each display. Activities toggles the overview; the center shows local date/time, and the Quick Settings popover includes network and battery toggles, top bar/dock switches, shortcut and favorites sections, and System Settings links. Status does not guarantee internet connectivity.
+Mnome displays GNOME's 32-point bar on each display, in place of the Mac menu bar. On the left, the Activities button shows one dot per workspace, the current one a wide pill; it toggles the overview. The centre shows the date and time as GNOME does ("Nov 4  3:15 PM", in your locale's order). The status pill on the right shows network (Wi-Fi strength or wired), volume and battery, or a power icon without a battery, and opens Quick Settings. Text is Adwaita Sans and the icons are Adwaita's symbolic set, both bundled (`Sources/Mnome/Resources/ADWAITA-PROVENANCE.md`). The bar and Quick Settings follow Preferences → Appearance (light or dark, as GNOME 47 does); the dash, overview and switchers stay dark, and Increase Contrast strengthens the highlights. Status does not guarantee internet connectivity.
 
 Use **Show Top Bar** in Quick Settings or Preferences → Shell to hide or restore the bars. They overlay normal application content without reserving workspace or resizing windows. Closing the overview leaves the bars running. Apple’s menu-bar settings are unchanged.
 

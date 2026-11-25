@@ -103,7 +103,16 @@ The full list is in Mnome's **Keyboard Shortcuts** window.
 
 ## Download
 
-[The latest release](https://github.com/VachaganGrigoryan/Mnome/releases/latest) has `Mnome.app` zipped. It is not notarized by Apple: unzip it, move it to Applications, then right-click it and choose Open (or allow it in System Settings → Privacy & Security). Quitting Mnome puts everything back; after a crash, run `/Applications/Mnome.app/Contents/MacOS/Mnome --rescue`.
+With [Homebrew](https://brew.sh):
+
+```sh
+brew trust VachaganGrigoryan/tap   # once: Homebrew asks before loading casks from a tap
+brew install --cask VachaganGrigoryan/tap/mnome
+```
+
+Uninstalling with `brew uninstall --cask mnome` quits Mnome first, so your Mac is put back as it was.
+
+Or by hand: [the latest release](https://github.com/VachaganGrigoryan/Mnome/releases/latest) has `Mnome.app` zipped. It is not notarized by Apple: unzip it, move it to Applications, then right-click it and choose Open (or allow it in System Settings → Privacy & Security). Quitting Mnome puts everything back; after a crash, run `/Applications/Mnome.app/Contents/MacOS/Mnome --rescue`.
 
 ## Build from source
 

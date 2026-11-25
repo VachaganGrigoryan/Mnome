@@ -62,6 +62,8 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
     let windowManager = WindowManager()
     private var dragTiler: DragTiler?
     private let hotCorner = HotCornerWatch()
+    private lazy var slide = WorkspaceSlide(manager: windowManager, captures: overview.captures, wallpapers: overview.wallpapers)
+    private lazy var gestures = Gestures(overview: overview, slide: slide, manager: windowManager)
     let switcher = SwitcherController(), workspacePopup = WorkspacePopup()
     private var workspaceWatch: AnyCancellable?, mediaWatch: AnyCancellable?, screensWatch: NSObjectProtocol?
     let osd = OSD()
@@ -168,13 +170,14 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
     func applicationWillTerminate(_ notification: Notification) { windowManager.shutDown(); topBar.stop(); dock.stop(); macChrome.restoreAll(quitting: true) }
     /// Window control needs Accessibility. Asked for once; after that it starts as soon as it is granted.
     func startWindowManager() {
-        if AXIsProcessTrusted() { windowManager.start(); dragTiler = dragTiler ?? DragTiler(windowManager); startHotCorner(); startShortcuts(); return }
+        if AXIsProcessTrusted() { windowManager.start(); dragTiler = dragTiler ?? DragTiler(windowManager); startHotCorner(); startGestures(); startShortcuts(); return }
         if !UserDefaults.standard.bool(forKey: "askedForAccessibility") {
             UserDefaults.standard.set(true, forKey: "askedForAccessibility")
             AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.startWindowManager() }
     }
+    private func startGestures() { gestures.popup = { [weak self] in self?.showWorkspacePopup() }; gestures.start(); slide.warmUp() }
     /// Not over a full-screen window: there it would open while reaching for the app's own menu.
     private func startHotCorner() {
         hotCorner.triggered = { [weak self] in
@@ -246,8 +249,11 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
     }
     private func switchWorkspace(_ make: (WMState) -> WMEvent?) {
         guard windowManager.running, let state = windowManager.state, state.workspacesOn, let event = make(state) else { return }
-        windowManager.send(event)
-        if !overview.isOpen, let now = windowManager.state, let i = now.workspaces.firstIndex(of: now.current) { workspacePopup.show(count: now.workspaces.count, current: i) } // the overview slides instead
+        guard !overview.isOpen else { windowManager.send(event); return } // the overview slides itself
+        Task { await slide.perform(event, sent: showWorkspacePopup) }
+    }
+    private func showWorkspacePopup() {
+        if !overview.isOpen, let now = windowManager.state, let i = now.workspaces.firstIndex(of: now.current) { workspacePopup.show(count: now.workspaces.count, current: i) }
     }
     @objc func bringBackWindows() {
         Task {

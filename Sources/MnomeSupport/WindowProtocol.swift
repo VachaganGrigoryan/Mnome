@@ -126,3 +126,18 @@ public struct WMState: Decodable, Equatable, Sendable {
     public func isShown(_ id: UInt64) -> Bool { window(id).map { !$0.minimized && !$0.hidden && !isParked(id) } ?? false }
     public init(json: Any) throws { self = try JSONDecoder().decode(WMState.self, from: JSONSerialization.data(withJSONObject: json)) }
 }
+extension WMState {
+    /// The workspace a step, a jump or a carried window lands on, and which way it lies; nil when it goes nowhere.
+    public func destination(of event: WMEvent) -> (workspace: UInt64, direction: Int, carried: UInt64?)? {
+        guard workspacesOn, let here = workspaces.firstIndex(of: current) else { return nil }
+        let to: Int?, carried: UInt64?
+        switch event {
+        case let .stepWorkspace(delta): to = here + delta; carried = nil
+        case let .setWorkspace(ws): to = workspaces.firstIndex(of: ws); carried = nil
+        case let .carryWindow(id, delta): to = here + delta; carried = id
+        default: return nil
+        }
+        guard let to, to != here, workspaces.indices.contains(to) else { return nil }
+        return (workspaces[to], to > here ? 1 : -1, carried)
+    }
+}

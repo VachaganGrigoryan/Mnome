@@ -65,6 +65,9 @@ import MnomeSupport
         }
     }
     private static var popup: Bool { listed().contains { $0[kCGWindowOwnerPID as String] as? Int32 == mnome && (($0[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }.map { $0.height < 100 && $0.width < 600 && $0.minY > 300 } ?? false) } }
+    private static func moved(_ before: [UInt32: CGRect], _ now: [UInt32: CGRect]) -> [String] { before.compactMap { id, was in now[id].map { $0 == was ? nil : "\(id) \(was) → \($0)" } ?? "\(id) gone" } }
+    /// The slide between workspaces: a Mnome window over every app and under the bar.
+    private static var cover: Bool { listed().contains { $0[kCGWindowOwnerPID as String] as? Int32 == mnome && $0[kCGWindowLayer as String] as? Int == 26 } }
     /// Right Command with Option, and Shift if asked, then an arrow.
     private static func workspaceKey(_ keys: Keys, _ key: CGKeyCode, shift: Bool = false) async {
         let option: UInt64 = 0x8_0020, all = Keys.right | option | (shift ? Keys.shift : 0)
@@ -77,12 +80,14 @@ import MnomeSupport
         let main = displays[0], onMain = before.filter { main.contains(CGPoint(x: $0.value.midX, y: $0.value.midY)) }
         let parked = { (f: CGRect?) in f.map { Parking.isParked($0, displays: displays) } ?? false }
         let back = { others(keys) == before }
-        await workspaceKey(keys, 124, shift: true); let shown = popup; await Live.sleep(1.5)
+        await workspaceKey(keys, 124, shift: true); let shown = await Live.wait(1) { popup }; await Live.sleep(1.5)
         Live.check("W1 Super+Option+Shift+→ takes the window to a new workspace", frame(keys.pid) == mine && onMain.keys.allSatisfy { parked(others(keys)[$0]) }, "\(frame(keys.pid)) want \(mine), parked \(onMain.keys.filter { parked(others(keys)[$0]) }.count) of \(onMain.count)")
         Live.check("W1 with a row of dots", shown)
         Live.check("W1 and the keyboard stays with it", keys.isFront)
-        await workspaceKey(keys, 123); await Live.sleep(1.5)
-        Live.check("W2 Super+Option+← goes back: every window exactly where it was", parked(frame(keys.pid)) && back(), "\(before.filter { others(keys)[$0.key] != $0.value }.count) moved")
+        let pressed = Date(); await workspaceKey(keys, 123); let covered = await Live.wait(0.5) { cover }, uncovered = await Live.wait(2) { !cover }, took = Date().timeIntervalSince(pressed)
+        if CGPreflightScreenCaptureAccess(), !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { Live.check("W2 the screen slides, and the slide is gone within a second", covered && uncovered && took < 1, "covered \(covered), gone after \(Int(took * 1000)) ms") }
+        await Live.sleep(1.5)
+        Live.check("W2 Super+Option+← goes back: every window exactly where it was", parked(frame(keys.pid)) && back(), "\(moved(before, others(keys)))")
         Live.check("W2 and the keyboard is on a window in sight", NSWorkspace.shared.frontmostApplication?.processIdentifier != keys.pid)
         await workspaceKey(keys, 124); await Live.sleep(1.5)
         Live.check("W3 Super+Option+→ shows it again, exactly", frame(keys.pid) == mine, "\(frame(keys.pid)) want \(mine)")

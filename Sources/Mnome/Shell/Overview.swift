@@ -42,7 +42,8 @@ extension Animation {
     func toggle(apps: Bool) {
         if !isOpen { open(apps: apps) } else if stage.apps != apps && model.query.isEmpty { setApps(apps) } else { close() }
     }
-    func open(apps: Bool) {
+    /// `following`: three fingers drive it from closed to open, through `follow`.
+    func open(apps: Bool, following: Bool = false) {
         leaving?.cancel(); panels.forEach { $0.orderOut(nil) }; panels = []; stages = []; watches = []
         isOpen = true; stage.apps = apps; stage.selected = nil; stage.page = 0; selectedWindow = nil; model.query = ""
         snapshot = makeSnapshot(); wallpapers.load()
@@ -73,8 +74,8 @@ extension Animation {
         }
         topBar.status.inOverview = true
         if let view = stages.first { FrameMeter.shared.begin(apps ? "open-apps" : "open", on: view) }
-        for view in stages { view.set(progress: 1, apps: apps, duration: 0.25) }
-        stage.shown = true; fadeChrome(to: 1)
+        if !following { for view in stages { view.set(progress: 1, apps: apps, duration: 0.25) }; fadeChrome(to: 1) }
+        stage.shown = true
         watches = [
             windowManager.$state.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.refresh() },
             captures.$images.receive(on: DispatchQueue.main).sink { [weak self] images in self?.stages.forEach { $0.setImages(images) } },
@@ -107,6 +108,21 @@ extension Animation {
         guard let chromeView else { return }
         NSAnimationContext.runAnimationGroup { context in context.duration = 0.25; context.timingFunction = .overview; chromeView.animator().alphaValue = alpha }
     }
+    /// 0 is closed, 1 open: the windows follow the fingers.
+    func follow(_ progress: CGFloat) {
+        if !isOpen { open(apps: false, following: true) }
+        let p = min(1, max(0, progress))
+        for view in stages { view.set(progress: p, apps: false, duration: 0) }
+        chromeView?.alphaValue = p
+    }
+    /// The fingers let go: on to open, or back to closed.
+    func settle(open: Bool) {
+        guard isOpen else { return }
+        guard open else { close(); return }
+        for view in stages { view.set(progress: 1, apps: false, duration: 0.2) }
+        fadeChrome(to: 1)
+    }
+    var showsApps: Bool { isOpen && stage.apps }
     func escape() { if !model.query.isEmpty { model.query = "" } else { close() } }
     private func setApps(_ apps: Bool) {
         stage.apps = apps; stage.selected = nil

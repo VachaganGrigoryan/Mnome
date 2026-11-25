@@ -322,6 +322,8 @@ struct PreferencesView: View {
     @AppStorage("workspaces") private var workspacesOn = true
     @AppStorage("edgeTiling") private var edgeTiling = true
     @AppStorage("hotCorner") private var hotCorner = true
+    @AppStorage("trackpadGestures") private var trackpadGestures = true
+    private static var threeFingerDrag: Bool { ["com.apple.AppleMultitouchTrackpad", "com.apple.driver.AppleBluetoothMultitouch.trackpad"].contains { UserDefaults(suiteName: $0)?.bool(forKey: "TrackpadThreeFingerDrag") == true } }
     @State private var page = "appearance"
     var body: some View {
         VStack(spacing: 0) {
@@ -348,8 +350,9 @@ struct PreferencesView: View {
                             SwitchRow(title: "Edge Tiling", isOn: $edgeTiling)
                             ActionRow(title: "Bring Back All Windows", icon: "macwindow.on.rectangle", action: { actions.bringBackWindows() })
                         }
-                        PreferencesGroup(title: "Overview", footer: "Push the pointer into the top-left corner of the screen to open or close the overview.") {
+                        PreferencesGroup(title: "Overview", footer: "Push the pointer into the top-left corner of the screen to open or close the overview. On the trackpad, swipe up with three fingers for the overview and again for the applications, down to go back, and sideways to switch workspace.\(Self.threeFingerDrag ? " Three-finger drag is on (System Settings → Accessibility → Pointer Control) and takes these swipes; turn it off to use them." : "")") {
                             SwitchRow(title: "Hot Corner", isOn: $hotCorner)
+                            SwitchRow(title: "Trackpad Gestures", isOn: $trackpadGestures)
                         }
                         PreferencesGroup(title: "Overview Shortcut", footer: "System-reserved shortcuts remain controlled by macOS.") {
                             ForEach(ShortcutChoice.all, id: \.title) { choice in

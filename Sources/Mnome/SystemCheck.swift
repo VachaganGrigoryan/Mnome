@@ -107,6 +107,8 @@ import ScreenCaptureKit
 
         Live.check("dark style can be read", Private.darkStyle != nil)
         Live.check("Night Light can be read", Private.nightLight != nil)
+        Live.check("the trackpad's touches can be read (MultitouchSupport)", Multitouch.missing.isEmpty, "missing \(Multitouch.missing)")
+        if Multitouch.missing.isEmpty { let touch = Multitouch(), found = touch.start { _, _, _ in }; touch.stop(); if found > 0 { Live.check("a trackpad is there to read", true, "\(found)") } else { Live.skip("trackpad", "none connected") } }
         Live.check("Bluetooth can be read", Private.bluetoothOn != nil)
         if let wifi = CWWiFiClient.shared().interface() { Live.note("Wi-Fi \(wifi.powerOn() ? "on" : "off"), its name is \(wifi.ssid() == nil ? "hidden without Location" : "visible")") } else { Live.skip("Wi-Fi", "no interface") }
         Live.skip("switching Wi-Fi and Bluetooth", "it would cut the network and wireless keyboards")

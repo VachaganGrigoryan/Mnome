@@ -45,6 +45,16 @@ final class WorkspaceStateTests: XCTestCase {
         }
         XCTAssertEqual(try placement("free"), .free); XCTAssertEqual(try placement("maximized"), .maximized); XCTAssertEqual(try placement(["tiled": ["cell": 0]]), .tiled)
     }
+    func testDestinationsOfWorkspaceSwitches() throws {
+        let state = try WMState(json: ["windows": [], "workspaces": [1, 2, 5], "current": 2, "main": 1, "mru": [], "workspaces_on": true])
+        XCTAssertEqual(state.destination(of: .stepWorkspace(1))?.workspace, 5); XCTAssertEqual(state.destination(of: .stepWorkspace(1))?.direction, 1)
+        XCTAssertEqual(state.destination(of: .stepWorkspace(-1))?.direction, -1)
+        XCTAssertNil(state.destination(of: .stepWorkspace(2)), "past the last one")
+        XCTAssertNil(state.destination(of: .setWorkspace(2)), "already there")
+        XCTAssertEqual(state.destination(of: .setWorkspace(1))?.workspace, 1)
+        XCTAssertEqual(state.destination(of: .carryWindow(9, 1))?.carried, 9)
+        XCTAssertNil(state.destination(of: .showDesktop))
+    }
     func testTilePreviewMatchesTheCoresHalvesAndQuarters() {
         let work = WMRect(x: 0, y: 32, w: 1281, h: 769)
         XCTAssertEqual(TilePreview.rect(for: .left, work: work), WMRect(x: 0, y: 32, w: 640, h: 769))

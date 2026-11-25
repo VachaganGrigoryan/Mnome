@@ -16,7 +16,7 @@ enum Private {
 
     // Not in the interface yet: the system check shows whether this macOS still has them.
 
-    private static func symbol<T>(_ library: String, _ name: String, as type: T.Type) -> T? { dlopen(library, RTLD_NOW).flatMap { dlsym($0, name) }.map { unsafeBitCast($0, to: type) } }
+    static func symbol<T>(_ library: String, _ name: String, as type: T.Type) -> T? { dlopen(library, RTLD_NOW).flatMap { dlsym($0, name) }.map { unsafeBitCast($0, to: type) } }
     private static let displayServices = "/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices", skyLight = "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight"
     private static let getBrightness = symbol(displayServices, "DisplayServicesGetBrightness", as: (@convention(c) (UInt32, UnsafeMutablePointer<Float>) -> Int32).self)
     private static let putBrightness = symbol(displayServices, "DisplayServicesSetBrightness", as: (@convention(c) (UInt32, Float) -> Int32).self)

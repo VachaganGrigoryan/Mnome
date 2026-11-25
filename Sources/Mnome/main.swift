@@ -293,7 +293,7 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
         }, 1, &type, Unmanaged.passUnretained(self).toOpaque(), nil)
         RegisterEventHotKey(UInt32(kVK_Space), UInt32(ShortcutChoice.choice(forMask: UserDefaults.standard.integer(forKey: "shortcutModifiers")).mask), EventHotKeyID(signature: 0x4d4e4f4d, id: 1), GetApplicationEventTarget(), 0, &hotkey)
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, NSApp.isActive, let window = NSApp.keyWindow else { return event }
+            guard let self, NSApp.isActive, let window = NSApp.keyWindow, !KeyboardSink.isSink(window) else { return event }
             if let editor = window.firstResponder as? NSTextView, editor.hasMarkedText() { return event }
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             if modifiers.contains(.control), !modifiers.contains(.command), !modifiers.contains(.option) {
@@ -360,7 +360,7 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
         case .restore: windowManager.withFocused { .restore($0) }
         case .minimize: windowManager.withFocused { .minimize($0) }
         case .center: windowManager.withFocused { .center($0) }
-        case .close: windowManager.registry.closeFocused()
+        case .close: windowManager.closeFocused()
         case .showDesktop: if windowManager.running { windowManager.send(.showDesktop) }
         case .cycle: if windowManager.running { windowManager.send(.cycle(backwards: false)) }
         case .cycleBack: if windowManager.running { windowManager.send(.cycle(backwards: true)) }
@@ -428,7 +428,12 @@ final class ShellPanel: NSPanel { override var canBecomeKey: Bool { true }; over
         }
         model.refreshWindows(); NSApp.activate(); panel?.makeKeyAndOrderFront(nil)
     }
-    func dismiss(reactivate: Bool = true) { model.generation = UUID(); model.query = ""; panels.forEach { $0.orderOut(nil) }; panels = []; panel = nil; if reactivate { previous?.activate() } }
+    func dismiss(reactivate: Bool = true) { model.generation = UUID(); model.query = ""; panels.forEach { $0.orderOut(nil) }; panels = []; panel = nil
+        guard reactivate else { return }
+        // To what the window manager wants in front: the app from before may only have windows on another workspace now.
+        if windowManager.running { if let id = windowManager.state?.focus, windowManager.focus(id) { return }; Task { _ = await windowManager.sink.take() }; return }
+        previous?.activate()
+    }
 }
 MainActor.assumeIsolated {
  if CommandLine.arguments.contains("--self-test") {

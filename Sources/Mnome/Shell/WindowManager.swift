@@ -13,6 +13,13 @@ import MnomeSupport
     private var core: Any = NSNull(), revision: UInt64 = 0, ledger = IntentLedger()
     private var chains: [UInt64: Task<Void, Never>] = [:], originals: [UInt64: CGRect] = [:], records: [UInt64: ParkedRecord] = [:]
     private var screenObserver: NSObjectProtocol?
+    let sink = KeyboardSink()
+    /// Off in Preferences. Also off while Stage Manager is on or no display corner is free.
+    var workspacesWanted = UserDefaults.standard.object(forKey: "workspaces") as? Bool ?? true { didSet { UserDefaults.standard.set(workspacesWanted, forKey: "workspaces"); updateDisplays() } }
+    /// For the engine check: displays that are not there, to try other arrangements.
+    static var extraDisplays: [CGRect] = []
+    private var displayWait: Task<Void, Never>?, clicks: Any?, desktopClickAt = Date.distantPast
+    private var raising: UInt64?, keyboardOwner: UInt64? // our focus command under way; the visible window that last had the keyboard
     private var unsettled = 0, parkedAgain: [UInt64: Int] = [:], unanswered: Set<UInt64> = [] // counts the times macOS may have moved windows
 
     nonisolated static var defaultJournal: URL { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Mnome/parked.json") }
@@ -23,7 +30,8 @@ import MnomeSupport
         guard journal.acquire() else { NSLog("Mnome: another copy is managing windows"); return }
         running = true
         updateDisplays()
-        screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.updateDisplays() } }
+        screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.displaysChanged() } }
+        clicks = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in MainActor.assumeIsolated { if Self.desktopUnderPointer() { self?.desktopClickAt = Date() } } }
         registry.onEvent = { [weak self] in self?.observe($0) }
         registry.away.returned = { [weak self] in self?.settle() }
         Task { if !journal.records.isEmpty { _ = await recover() }; if running { registry.start() } } // before tracking, or parked frames would be taken for real ones
@@ -33,6 +41,7 @@ import MnomeSupport
         guard running else { return }; running = false
         registry.stop(); chains.values.forEach { $0.cancel() }
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }; screenObserver = nil
+        if let clicks { NSEvent.removeMonitor(clicks) }; clicks = nil; displayWait?.cancel()
         RecoveryRunner.restoreBlocking(journal, timeout: 5)
         journal.release()
     }
@@ -40,7 +49,19 @@ import MnomeSupport
     // Displays, with a top-left origin from here on
 
     static var primaryHeight: CGFloat { NSScreen.screens.first?.frame.maxY ?? 0 }
-    static func displayFrames() -> [CGRect] { NSScreen.screens.map { WorkArea.flip($0.frame, primaryHeight: primaryHeight) } }
+    static func displayFrames() -> [CGRect] { NSScreen.screens.map { WorkArea.flip($0.frame, primaryHeight: primaryHeight) } + extraDisplays }
+    /// macOS rearranges in several steps and moves windows as it goes: wait until it has finished, and take none of it for the person's.
+    func displaysChanged() {
+        guard running else { return }
+        registry.away.leave("displays"); displayWait?.cancel()
+        displayWait = Task { try? await Task.sleep(for: .milliseconds(700)); guard !Task.isCancelled else { return }; updateDisplays(); registry.away.comeBack("displays") }
+    }
+    private static var stageManager: Bool { UserDefaults(suiteName: "com.apple.WindowManager")?.bool(forKey: "GloballyEnabled") ?? false }
+    private static func desktopUnderPointer() -> Bool {
+        let p = NSEvent.mouseLocation, point = CGPoint(x: p.x, y: primaryHeight - p.y)
+        let hit = (CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []).first { ($0[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }?.contains(point) ?? false }
+        return (hit?[kCGWindowLayer as String] as? Int ?? -1) < 0
+    }
     static func displayID(_ screen: NSScreen) -> UInt64 { (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint64Value ?? 0 }
     /// Also when our bar or dock appears, moves or goes.
     func updateDisplays() {
@@ -50,6 +71,8 @@ import MnomeSupport
             return WMDisplay(id: Self.displayID(screen), frame: WMRect(WorkArea.flip(screen.frame, primaryHeight: Self.primaryHeight)), work: WMRect(WorkArea.flip(work, primaryHeight: Self.primaryHeight)))
         }
         send(.displays(displays, main: Self.displayID(main)))
+        let frames = Self.displayFrames(), on = workspacesWanted && !Self.stageManager && frames.first.flatMap { Parking.corner(displays: frames, main: $0) } != nil
+        if state?.workspacesOn != on { send(.workspacesOn(on)) }
     }
 
     // Policy
@@ -62,6 +85,7 @@ import MnomeSupport
             let raw = result["ops"] as? [[String: Any]] ?? [], ops = raw.compactMap(WMOp.init(json:))
             if ops.count != raw.count { NSLog("Mnome: unknown window operation in %@", String(describing: raw)) }
             ops.forEach { execute($0, revision) }
+            if ops.contains(where: { if case .park = $0 { true } else if case .minimize = $0 { true } else { false } }), state?.focus == nil { keepKeyboardSafe() }
         } catch { NSLog("Mnome: window event refused: %@", String(describing: error)) } // state is unchanged
     }
     var focused: UInt64? { state?.focus }
@@ -71,7 +95,20 @@ import MnomeSupport
     /// For shortcuts: acts on the window in front, or on nothing when that is not a window we manage.
     func withFocused(_ make: @escaping (UInt64) -> WMEvent) {
         guard running else { return }
-        Task { if let id = await registry.focusedWindow(), state?.window(id) != nil { send(make(id)) } }
+        Task { if let id = await registry.focusedWindow(), state?.isShown(id) == true { send(make(id)) } }
+    }
+    /// Never one out of sight, even if it has the keyboard.
+    func closeFocused() {
+        guard running else { registry.closeFocused(); return }
+        Task { if let id = await registry.focusedWindow(), state?.window(id) != nil, state?.isShown(id) != true { return }; registry.closeFocused() }
+    }
+    /// If the keyboard is on a window out of sight, give it to the one that should have it, or to nobody.
+    private func keepKeyboardSafe() {
+        Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            guard running, raising == nil, let id = await registry.focusedWindow(), state?.isShown(id) == false else { return }
+            if let wanted = state?.focus, state?.isShown(wanted) == true { raise(wanted, after: chains[wanted]) } else if await sink.take() { keyboardOwner = nil }
+        }
     }
     private func observe(_ event: RegistryEvent) {
         switch event {
@@ -92,10 +129,26 @@ import MnomeSupport
         case let .minimized(id, on): send(.minimized(id, on))
         case let .hidden(id, on): send(.hidden(id, on))
         case let .fullscreen(id, on): send(.fullscreen(id, on))
-        case let .focused(id): if !ledger.isPuttingAway(id) { send(.focused(id)) }
+        case let .focused(id): focusReported(id)
         }
     }
 
+    private func focusReported(_ id: UInt64) {
+        guard let state, state.window(id) != nil else { return }
+        if state.isShown(id) { keyboardOwner = id; send(.focused(id)); return }
+        let before = keyboardOwner, beforeApp = before.flatMap { registry.windows[$0]?.pid }, ours = raising != nil || ledger.isPuttingAway(id), app = registry.windows[id].flatMap { NSRunningApplication(processIdentifier: $0.pid)?.bundleIdentifier }
+        Task {
+            try? await Task.sleep(for: .milliseconds(250)) // a close or quit that explains it may still be on its way
+            let now = await registry.focusedWindow(), ended = beforeApp.map { NSRunningApplication(processIdentifier: $0)?.isTerminated ?? true } ?? false // macOS may say so late
+            let owner: FocusGate.Before = before.map { self.state?.isShown($0) == true && !ended ? .shown : .gone } ?? .nothing
+            let facts = FocusGate.Facts(before: owner, stillFocused: now == id, ours: ours || raising != nil, desktopClick: Date().timeIntervalSince(desktopClickAt), finder: app == "com.apple.finder")
+            switch FocusGate.verdict(facts) {
+            case .follow: if self.state?.isShown(id) == false { keyboardOwner = id; send(.focused(id)) }
+            case .refuse: keepKeyboardSafe()
+            case .ignore: break
+            }
+        }
+    }
     private func moved(_ id: UInt64, _ frame: CGRect) {
         guard !ledger.isEcho(id, frame: frame) else { return }
         if records[id] != nil, Parking.isParked(frame, displays: Self.displayFrames()) {
@@ -196,12 +249,23 @@ import MnomeSupport
         }
     }
     /// Restored and confirmed first, then focused.
+    /// Only once it is in sight, and then read back: the keyboard must never land on a window out of sight.
     private func raise(_ id: UInt64, after work: Task<Void, Never>?) {
+        raising = id
         Task {
+            defer { if raising == id { raising = nil } }
             await work?.value
-            guard let window = registry.windows[id], focused == id else { return }
-            _ = await client.run(window.pid) { try? window.ref.set("AXMain", kCFBooleanTrue); try? AXUIElementCreateApplication(window.pid).set("AXFrontmost", kCFBooleanTrue); try window.ref.perform("AXRaise") }
-            NSRunningApplication(processIdentifier: window.pid)?.activate()
+            guard let window = registry.windows[id], focused == id, state?.isShown(id) == true else { return }
+            let pid = window.pid, ref = window.ref, displays = Self.displayFrames()
+            guard case let .success(frame) = await client.run(pid, { try ref.frame() }), Recovery.inSight(frame, displays: displays) else { if raising == id { raising = nil }; keepKeyboardSafe(); return }
+            for _ in 0..<2 {
+                _ = await client.run(pid) { try? ref.set("AXMain", kCFBooleanTrue); try? AXUIElementCreateApplication(pid).set("AXFrontmost", kCFBooleanTrue); try ref.perform("AXRaise") }
+                NSRunningApplication(processIdentifier: pid)?.activate()
+                try? await Task.sleep(for: .milliseconds(250))
+                guard focused == id else { return } // something newer was asked for
+                if await registry.focusedWindow() == id { keyboardOwner = id; return }
+            }
+            if raising == id { raising = nil }; keepKeyboardSafe()
         }
     }
 

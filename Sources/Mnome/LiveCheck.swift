@@ -10,6 +10,7 @@ import MnomeSupport
     static func skip(_ name: String, _ why: String) { skipped += 1; print("skip ", name, "—", why); fflush(stdout) }
     static func note(_ text: String) { print("      \(text)"); fflush(stdout) }
     static func wait(_ seconds: Double = 5, _ done: () -> Bool) async -> Bool { let end = Date().addingTimeInterval(seconds); while Date() < end { if done() { return true }; try? await Task.sleep(for: .milliseconds(50)) }; return done() }
+    static func until(_ seconds: Double = 5, _ done: () async -> Bool) async -> Bool { let end = Date().addingTimeInterval(seconds); while Date() < end { if await done() { return true }; try? await Task.sleep(for: .milliseconds(100)) }; return await done() }
     static func sleep(_ seconds: Double) async { try? await Task.sleep(for: .seconds(seconds)) }
     static func near(_ a: CGRect?, _ b: CGRect) -> Bool { a.map { IntentLedger.close($0, b) } ?? false }
     static func frame(_ pid: pid_t, _ id: UInt64) -> CGRect? { (try? WindowRegistry.list(pid))?.first { Private.windowID($0).map(UInt64.init) == id }.flatMap { try? $0.frame() } }

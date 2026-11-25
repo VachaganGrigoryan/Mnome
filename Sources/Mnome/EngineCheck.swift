@@ -9,7 +9,7 @@ import MnomeSupport
 
     static func run() -> Never {
         if let flag = CommandLine.arguments.firstIndex(of: "--engine-check"), CommandLine.arguments.indices.contains(flag + 3), CommandLine.arguments[flag + 1] == "crash" { crash(pid_t(CommandLine.arguments[flag + 2])!, URL(fileURLWithPath: CommandLine.arguments[flag + 3])) }
-        Live.run("engine check") { if CommandLine.arguments.contains("apps") { try await apps() } else { try await all() } }
+        Live.run("engine check") { if CommandLine.arguments.contains("apps") { try await apps() } else { try await all(); try await focusRules() } }
     }
     private static func manager(_ pid: pid_t, _ journal: URL) -> WindowManager { let m = WindowManager(journal: journal); m.registry.only = [pid]; m.start(); return m }
     /// Parks two windows, then dies without any clean-up.
@@ -206,6 +206,57 @@ import MnomeSupport
         m.send(.setWorkspace(far())); await Live.sleep(0.5); helper.tell("unhide")
         check("and join their workspace when shown again", await wait { m.state?.window(one)?.hidden == false && parked("one") }, "\(String(describing: helper.frame("one")))")
         m.send(.setWorkspace(home)); _ = await wait { near(helper.frame("one"), before) }; await Live.sleep(1)
+    }
+
+    // Who gets the keyboard, with two apps
+
+    private static func focusRules() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("mnome-focus-\(getpid())"); defer { try? FileManager.default.removeItem(at: folder) }
+        let a = try Live.Windows(), b = try Live.Windows(); defer { a.stop(); b.stop() }
+        for h in [a, b] { h.tell("close stubborn"); h.tell("close fixed") }
+        let m = WindowManager(journal: folder.appendingPathComponent("parked.json")); m.registry.only = [a.pid, b.pid]; m.start(); defer { m.shutDown() }
+        guard await Live.until(5, { m.state?.windows.count == 4 }) else { check("tracks two apps", false, "\(m.state?.windows.count ?? 0)"); return }
+        let id = { (h: Live.Windows, name: String) in h.ids[name]! }
+        let front = { () async -> UInt64? in await m.registry.focusedWindow() }
+        let mine = { NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid() }
+        let safe = { () async -> Bool in let f = await front(); return mine() || (f.map { m.state?.isShown($0) == true } ?? false) }
+        let home = m.state!.current
+        for h in [a, b] { m.send(.toWorkspace(id(h, "two"), m.state!.workspaces.last!)) }
+        _ = await Live.until { [a, b].allSatisfy { h in h.frame("two").map { Parking.isParked($0, displays: WindowManager.displayFrames()) } ?? false } }
+        _ = m.focus(id(a, "one")); _ = await Live.until { await front() == id(a, "one") }
+
+        m.send(.setWorkspace(m.state!.workspaces.last!))
+        check("on an empty workspace no hidden window has the keyboard", await Live.until(3) { mine() }, "front \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "-")")
+        NSRunningApplication(processIdentifier: b.pid)?.activate()
+        check("choosing an app from there goes to its workspace", await Live.until { await front().map { m.state?.isShown($0) == true } == true && m.state?.current != m.state?.workspaces.last }, "current \(m.state!.current)")
+
+        m.send(.setWorkspace(home)); _ = m.focus(id(a, "one")); _ = await Live.until { await front() == id(a, "one") }; await Live.sleep(0.6)
+        a.tell("close one")
+        check("closing the last window of an app stays on the workspace", await Live.until(3) { await safe() } && m.state?.current == home, "current \(m.state!.current) home \(home)"); await Live.sleep(1)
+        check("and the keyboard goes to a window in sight", await safe() && m.state?.current == home, "current \(m.state!.current)")
+
+        _ = m.focus(id(b, "one")); _ = await Live.until { await front() == id(b, "one") }; await Live.sleep(0.6)
+        b.tell("minimize one"); await Live.sleep(1.5)
+        check("minimizing it stays too", await safe() && m.state?.current == home, "current \(m.state!.current)")
+        m.send(.activate(id(b, "one"))); _ = m.focus(id(b, "one")); _ = await Live.until { await front() == id(b, "one") }; await Live.sleep(0.6)
+        b.tell("hide"); await Live.sleep(1.5)
+        check("hiding its app stays too", await safe() && m.state?.current == home, "current \(m.state!.current)")
+        b.tell("unhide"); _ = m.focus(id(b, "one")); _ = await Live.until { await front() == id(b, "one") }; await Live.sleep(0.6)
+        b.stop(); await Live.sleep(1.5)
+        check("quitting its app stays too", await safe() && m.state?.current == home, "current \(m.state!.current)")
+        if let ws = m.state?.window(id(a, "two"))?.workspace, ws == m.state?.current, let away = m.state?.workspaces.first(where: { $0 != ws }) { m.send(.setWorkspace(away)) } // home may have gone as empty
+
+        let parkedTwo = { a.frame("two").map { Parking.isParked($0, displays: WindowManager.displayFrames()) } ?? false }
+        m.workspacesWanted = false
+        check("turning workspaces off shows every window", await Live.until { !parkedTwo() && m.state?.workspacesOn == false })
+        m.workspacesWanted = true
+        check("and on again puts them back", await Live.until { parkedTwo() }, "\(String(describing: a.frame("two")))")
+        let main = WindowManager.displayFrames()[0], others = WindowManager.displayFrames().dropFirst()
+        WindowManager.extraDisplays = [CGRect(x: main.minX - 800, y: main.maxY - 600, width: 800, height: 600), CGRect(x: main.maxX, y: main.maxY - 600, width: 800, height: 600)].filter { r in !others.contains { $0.intersects(r) } }
+        m.displaysChanged()
+        check("a display arrangement without a free corner turns workspaces off", await Live.until(6) { !parkedTwo() && m.state?.workspacesOn == false }, "\(WindowManager.extraDisplays)")
+        WindowManager.extraDisplays = []; m.displaysChanged()
+        check("and its end turns them on again", await Live.until(6) { parkedTwo() && m.state?.workspacesOn == true })
     }
 
     // Real apps, as fresh copies with settings of their own where the app allows it

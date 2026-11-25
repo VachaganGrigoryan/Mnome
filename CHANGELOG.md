@@ -29,5 +29,11 @@ The first release: GNOME Shell on macOS 27, with SIP on.
 - The Mac's Dock, if kept, with GNOME's Show Applications and as the overview's dash.
 - Recovery: everything is restored on quit, after a crash, or with `--rescue`; Bring Back All Windows.
 
+### Checked
+- `swift test` (112 tests), `cargo test` (46), clippy, fmt, `--self-test`.
+- `./scripts/live-tests.sh` on macOS 27 with two displays (a notched built-in and an external 1x): parts 1, 2, apps and 3 pass. Part 2's "a window moved while away goes back" failed once on timing and passed on re-run.
+- By hand: the app menus in the bar (open, slide across, close).
+- Not yet by hand: trackpad gestures, folders, the Mac Dock tile, Command-drag (see the GUIDE's manual checks).
+
 ### Known limits
 See the README.

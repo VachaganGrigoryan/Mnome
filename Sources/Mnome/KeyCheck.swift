@@ -36,9 +36,57 @@ import MnomeSupport
         let before = now(); Live.check("7 left Cmd+Left is the app's", await keys.reaches(123, with: 55, Keys.left) && now() == before, "\(now())")
         try await keys.chord(21, shift: true); keys.post(53, true, 0); keys.post(53, false, 0); await Live.sleep(0.8) // Esc ends the screenshot
         Live.check("8 right Cmd+Shift+4 opens no Activities", !overview)
+        if CommandLine.arguments.contains("workspaces") { try await workspaces(keys) } else { Live.skip("workspaces and Alt+Tab", "they park every window for a moment; add `workspaces` to include them") }
         if CommandLine.arguments.contains("desktop") { try await desktop(keys) } else { Live.skip("6 Super+D", "it minimizes every window; add `desktop` to include it") }
     } }
 
+    /// Every other app's windows, by number: frame and whether it is in the corner.
+    private static func others(_ keys: Keys) -> [UInt32: CGRect] {
+        NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && $0.bundleIdentifier != "dev.mnome.shell" && $0.processIdentifier != keys.pid && !$0.isHidden }.reduce(into: [:]) { found, app in
+            for ref in (try? WindowRegistry.list(app.processIdentifier)) ?? [] { if let id = Private.windowID(ref), (try? ref.flag("AXMinimized")) == false, (try? ref.value("AXSubrole") as? String) == "AXStandardWindow", let frame = try? ref.frame() { found[id] = frame } }
+        }
+    }
+    private static var popup: Bool { listed().contains { $0[kCGWindowOwnerPID as String] as? Int32 == mnome && (($0[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }.map { $0.height < 100 && $0.width < 600 && $0.minY > 300 } ?? false) } }
+    /// Right Command with Option, and Shift if asked, then an arrow.
+    private static func workspaceKey(_ keys: Keys, _ key: CGKeyCode, shift: Bool = false) async {
+        let option: UInt64 = 0x8_0020, all = Keys.right | option | (shift ? Keys.shift : 0)
+        keys.post(54, true, Keys.right); keys.post(58, true, Keys.right | option); if shift { keys.post(56, true, all) }
+        keys.post(key, true, all | Keys.arrow); keys.post(key, false, all | Keys.arrow)
+        if shift { keys.post(56, false, Keys.right | option) }; keys.post(58, false, Keys.right); keys.post(54, false, 0); await Live.sleep(0.15)
+    }
+    private static func workspaces(_ keys: Keys) async throws {
+        try await keys.toFront(); let mine = frame(keys.pid), before = others(keys), displays = WindowManager.displayFrames()
+        let main = displays[0], onMain = before.filter { main.contains(CGPoint(x: $0.value.midX, y: $0.value.midY)) }
+        let parked = { (f: CGRect?) in f.map { Parking.isParked($0, displays: displays) } ?? false }
+        let back = { others(keys) == before }
+        await workspaceKey(keys, 124, shift: true); let shown = popup; await Live.sleep(1.5)
+        Live.check("W1 Super+Option+Shift+→ takes the window to a new workspace", frame(keys.pid) == mine && onMain.keys.allSatisfy { parked(others(keys)[$0]) }, "\(frame(keys.pid)) want \(mine), parked \(onMain.keys.filter { parked(others(keys)[$0]) }.count) of \(onMain.count)")
+        Live.check("W1 with a row of dots", shown)
+        Live.check("W1 and the keyboard stays with it", keys.isFront)
+        await workspaceKey(keys, 123); await Live.sleep(1.5)
+        Live.check("W2 Super+Option+← goes back: every window exactly where it was", parked(frame(keys.pid)) && back(), "\(before.filter { others(keys)[$0.key] != $0.value }.count) moved")
+        Live.check("W2 and the keyboard is on a window in sight", NSWorkspace.shared.frontmostApplication?.processIdentifier != keys.pid)
+        await workspaceKey(keys, 124); await Live.sleep(1.5)
+        Live.check("W3 Super+Option+→ shows it again, exactly", frame(keys.pid) == mine, "\(frame(keys.pid)) want \(mine)")
+        try await keys.toFront(); await workspaceKey(keys, 123, shift: true); await Live.sleep(1.5)
+        Live.check("W4 and Shift+← brings it home, with everything else as it was", frame(keys.pid) == mine && back(), "\(before.filter { others(keys)[$0.key] != $0.value }.count) moved")
+
+        try await keys.toFront(); await Live.sleep(0.5)
+        let option: UInt64 = 0x8_0020
+        keys.post(58, true, option); keys.post(48, true, option); keys.post(48, false, option); keys.post(58, false, 0); await Live.sleep(1)
+        Live.check("A1 a quick Option+Tab goes to the app before", !keys.isFront && NSWorkspace.shared.frontmostApplication?.processIdentifier != mnome)
+        keys.post(58, true, option); keys.post(48, true, option); keys.post(48, false, option); keys.post(58, false, 0); await Live.sleep(1)
+        Live.check("A1 and again comes back", keys.isFront)
+        keys.post(58, true, option); keys.post(48, true, option); keys.post(48, false, option); await Live.sleep(0.5)
+        let big = listed().contains { $0[kCGWindowOwnerPID as String] as? Int32 == mnome && ($0[kCGWindowLayer as String] as? Int ?? 0) == Int(CGWindowLevelForKey(.popUpMenuWindow)) }
+        keys.post(53, true, option); keys.post(53, false, option); keys.post(58, false, 0); await Live.sleep(1)
+        Live.check("A2 held, it shows the applications", big)
+        Live.check("A2 Escape changes nothing", keys.isFront)
+        keys.post(54, true, Keys.right); keys.post(48, true, Keys.right); keys.post(48, false, Keys.right); keys.post(54, false, 0); await Live.sleep(1)
+        Live.check("A3 right Cmd+Tab switches too, and opens no Activities", !keys.isFront && !overview)
+        try await keys.toFront()
+        Live.check("A4 typing still reaches the app", await keys.reaches(8, with: 55, Keys.left))
+    }
     private static func desktop(_ keys: Keys) async throws {
         struct Seen: Hashable { let app: pid_t, frame: CGRect, shown: Bool }
         let all = { () -> [UInt32: Seen] in

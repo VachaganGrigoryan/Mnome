@@ -75,11 +75,11 @@ import ScreenCaptureKit
         guard await window.reaches(8, with: 55, Keys.left) else { throw Live.Stop("simulated keys do not reach the test window") }
         // First without the tap: this proves the test below would notice the app switcher.
         try await window.chord(48, with: 55, Keys.left); let switched = !window.isFront
-        var seen: [KeyRouter.Decision] = [], table = ShortcutTable(); _ = table.set(.center, Chord(48, .superKey))
+        var seen: [KeyRouter.Decision] = []; let table = ShortcutTable()
         let tap = EventTap(); tap.onDecision = { seen.append($0) }; tap.configure(table, .rightCommand, recording: false)
         guard tap.start() else { Live.check("the keyboard tap opens", false); return }; defer { tap.stop() }
 
-        if switched { try await window.chord(48); Live.check("right Cmd+Tab is caught before the Mac's app switcher", seen == [.run(.center)] && window.isFront, "\(seen), in front \(window.isFront)") } else { Live.skip("right Cmd+Tab before the app switcher", "left Cmd+Tab switched nothing either, so this would prove nothing") }
+        if switched { try await window.chord(48); Live.check("right Cmd+Tab is caught before the Mac's app switcher, for Mnome's own", seen.first == .switcher(.begin(windows: false, backwards: false)) && window.isFront, "\(seen), in front \(window.isFront)") } else { Live.skip("right Cmd+Tab before the app switcher", "left Cmd+Tab switched nothing either, so this would prove nothing") }
         try await window.toFront(); await Live.sleep(0.5)
         seen = []; await window.tap(54, Keys.right); Live.check("right Cmd alone is a Super tap", seen == [.superTap], "\(seen)")
         seen = []; await window.tap(55, Keys.left); Live.check("left Cmd alone is not", seen.isEmpty, "\(seen)")

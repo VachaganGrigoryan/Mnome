@@ -9,7 +9,7 @@ import MnomeSupport
 
     static func run() -> Never {
         if let flag = CommandLine.arguments.firstIndex(of: "--engine-check"), CommandLine.arguments.indices.contains(flag + 3), CommandLine.arguments[flag + 1] == "crash" { crash(pid_t(CommandLine.arguments[flag + 2])!, URL(fileURLWithPath: CommandLine.arguments[flag + 3])) }
-        Live.run("engine check") { if CommandLine.arguments.contains("apps") { try await apps() } else { try await all(); try await focusRules(); try await switcherRules() } }
+        Live.run("engine check") { if CommandLine.arguments.contains("displays") { try await displays() } else if CommandLine.arguments.contains("apps") { try await apps() } else { try await all(); try await focusRules(); try await switcherRules() } }
     }
     private static func manager(_ pid: pid_t, _ journal: URL) -> WindowManager { let m = WindowManager(journal: journal); m.registry.only = [pid]; m.start(); return m }
     /// Parks two windows, then dies without any clean-up.
@@ -259,6 +259,36 @@ import MnomeSupport
         check("and its end turns them on again", await Live.until(6) { parkedTwo() && m.state?.workspacesOn == true })
     }
 
+    // A display that comes and goes, beside the parking corner
+
+    private static func displays() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("mnome-displays-\(getpid())"); defer { try? FileManager.default.removeItem(at: folder) }
+        let journal = folder.appendingPathComponent("parked.json"), helper = try Live.Windows(); defer { helper.stop() }
+        let m = manager(helper.pid, journal); defer { m.shutDown() }
+        guard await Live.until(5, { m.state?.windows.count == 4 }) else { check("tracks the windows", false); return }
+        let one = helper.ids["one"]!, two = helper.ids["two"]!, before = helper.frame("one")!, count = NSScreen.screens.count
+        let out = { (f: CGRect?) in f.map { Parking.isParked($0, displays: WindowManager.displayFrames()) } ?? false }
+        let record = { RecoveryJournal(url: journal).records.first { $0.window == one } }
+        m.send(.toWorkspace(one, m.state!.workspaces.last!)); _ = await Live.until { out(helper.frame("one")) && record()?.parked != nil }
+        let corner = helper.frame("one")!, main = WindowManager.displayFrames()[0]
+        guard let screen = VirtualDisplay() else { Live.skip("a display that comes and goes", "this macOS has no virtual displays"); return }
+        defer { screen.remove() }
+        guard await Live.until(5, { NSScreen.screens.count == count + 1 }) else { check("a virtual display appears", false); return }
+        screen.move(to: CGPoint(x: main.minX - 1280, y: main.maxY - 800)) // over the corner where windows wait
+        _ = await Live.until(5) { WindowManager.displayFrames().contains { $0.maxX == main.minX } }
+        let free = Parking.corner(displays: WindowManager.displayFrames(), main: main) != nil
+        check("a display beside the corner: the window waits out of sight again, or every window shows", await Live.until(8) { free ? out(helper.frame("one")) && helper.frame("one") != corner : m.state?.workspacesOn == false && !out(helper.frame("one")) }, "free corner \(free), one \(String(describing: helper.frame("one")))")
+        check("and still knows where it belongs", record()?.original == before || !free && Live.near(helper.frame("one"), before), "\(String(describing: record()))")
+        helper.tell("move two \(Int(main.minX - 900)) \(Int(NSScreen.screens.first!.frame.height - main.maxY + 300))") // onto the display that will go
+        _ = await Live.until(5) { (helper.frame("two")?.maxX ?? 1) <= main.minX }
+        screen.remove()
+        check("when it goes, its window comes to the main display", await Live.until(10) { Recovery.inSight(helper.frame("two") ?? .null, displays: WindowManager.displayFrames()) && NSScreen.screens.count == count }, "\(String(describing: helper.frame("two")))")
+        check("and workspaces work as before", await Live.until(10) { m.state?.workspacesOn == true && out(helper.frame("one")) })
+        m.send(.toWorkspace(one, m.state!.current))
+        check("so the parked window comes back exactly", await Live.until(8) { Live.near(helper.frame("one"), before) && record() == nil }, "\(String(describing: helper.frame("one"))) want \(before)")
+        _ = two
+    }
+
     // Alt+Tab, without keys: the keys themselves are in the unit tests and the key check
 
     private static func switcherRules() async throws {
@@ -322,4 +352,36 @@ import MnomeSupport
         m.send(.setWorkspace(home)); _ = await wait { frames().allSatisfy { $0.map { Parking.isParked($0, displays: displays) } ?? false } }
         m.shutDown(); check("\(name): and when Mnome quits", frames() == before, "\(frames()) want \(before)")
     }
+}
+
+/// A display that is not there, through macOS's own private class; nil when this macOS lacks it.
+@MainActor final class VirtualDisplay {
+    private var display: AnyObject?
+    let id: CGDirectDisplayID
+    init?(width: UInt32 = 1280, height: UInt32 = 800) {
+        guard let descriptorClass = NSClassFromString("CGVirtualDisplayDescriptor") as? NSObject.Type, let displayClass = NSClassFromString("CGVirtualDisplay"),
+              let settingsClass = NSClassFromString("CGVirtualDisplaySettings") as? NSObject.Type, let modeClass = NSClassFromString("CGVirtualDisplayMode") else { return nil }
+        let descriptor = descriptorClass.init()
+        descriptor.setValue("Mnome check", forKey: "name"); descriptor.setValue(width, forKey: "maxPixelsWide"); descriptor.setValue(height, forKey: "maxPixelsHigh")
+        descriptor.setValue(NSValue(size: CGSize(width: 300, height: 190)), forKey: "sizeInMillimeters")
+        descriptor.setValue(0x4D4E, forKey: "vendorID"); descriptor.setValue(0x0001, forKey: "productID"); descriptor.setValue(UInt32(getpid()), forKey: "serialNum")
+        descriptor.setValue(DispatchQueue.main, forKey: "queue")
+        func alloc(_ c: AnyClass) -> AnyObject? { (c as AnyObject).perform(NSSelectorFromString("alloc"))?.takeUnretainedValue() }
+        typealias InitObject = @convention(c) (AnyObject, Selector, AnyObject) -> Unmanaged<AnyObject>? // init hands back ownership; held unowned, the display would never go
+        typealias InitMode = @convention(c) (AnyObject, Selector, UInt32, UInt32, Double) -> AnyObject?
+        guard let raw = alloc(displayClass), let make = class_getMethodImplementation(displayClass, NSSelectorFromString("initWithDescriptor:")),
+              let display = unsafeBitCast(make, to: InitObject.self)(raw, NSSelectorFromString("initWithDescriptor:"), descriptor)?.takeRetainedValue(),
+              let rawMode = alloc(modeClass), let makeMode = class_getMethodImplementation(modeClass, NSSelectorFromString("initWithWidth:height:refreshRate:")),
+              let mode = unsafeBitCast(makeMode, to: InitMode.self)(rawMode, NSSelectorFromString("initWithWidth:height:refreshRate:"), width, height, 60) else { return nil }
+        let settings = settingsClass.init(); settings.setValue([mode], forKey: "modes"); settings.setValue(0, forKey: "hiDPI")
+        guard (display as? NSObject)?.perform(NSSelectorFromString("applySettings:"), with: settings) != nil, let id = (display as? NSObject)?.value(forKey: "displayID") as? UInt32, id != 0 else { return nil }
+        self.display = display; self.id = id
+    }
+    /// Top-left coordinates, as the window server uses.
+    func move(to origin: CGPoint) {
+        var config: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&config) == .success else { return }
+        CGConfigureDisplayOrigin(config, id, Int32(origin.x), Int32(origin.y)); CGCompleteDisplayConfiguration(config, .forSession)
+    }
+    func remove() { display = nil }
 }

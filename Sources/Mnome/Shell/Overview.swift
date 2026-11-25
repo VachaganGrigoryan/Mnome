@@ -100,6 +100,8 @@ extension Animation {
         if let view = views.first { FrameMeter.shared.begin("close", on: view) }
         fadeChrome(to: 0)
         var left = views.count
+        // Gone even if an animation never reports its end: an invisible overview would catch every click.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in if self?.isOpen == false { closing.forEach { $0.orderOut(nil) } } }
         for view in views { view.set(progress: 0, apps: false, duration: 0.25) { [weak self] in
             left -= 1; guard left == 0 else { return }
             closing.forEach { $0.orderOut(nil) }

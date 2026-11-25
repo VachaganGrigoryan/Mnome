@@ -16,7 +16,7 @@ import MnomeSupport
     private let touch = Multitouch(), overview: OverviewController, slide: WorkspaceSlide, manager: WindowManager
     /// The row of dots, after a workspace switch.
     var popup: @MainActor () -> Void = {}
-    private var tracker = SwipeTracker(), mode = Mode.idle, progress: CGFloat = 0, finishing: Task<Void, Never>?, wake: NSObjectProtocol?
+    private var tracker = SwipeTracker(), mode = Mode.idle, progress: CGFloat = 0, finishing: Task<Void, Never>?, wake: NSObjectProtocol?, silence: Task<Void, Never>?
     private(set) var trackpads = 0
     static var enabled: Bool { UserDefaults.standard.object(forKey: "trackpadGestures") as? Bool ?? true }
 
@@ -33,7 +33,10 @@ import MnomeSupport
     }
 
     private func frame(_ count: Int, _ centroid: CGPoint, _ time: Double) {
-        guard Self.enabled, let out = tracker.feed(count: count, centroid: centroid, time: time) else { return }
+        guard Self.enabled else { return }
+        // The last frame of a swipe can be lost (a trackpad that sleeps, a device that goes): never leave one half done.
+        silence?.cancel(); silence = Task { try? await Task.sleep(for: .milliseconds(500)); if !Task.isCancelled, case .idle = self.mode {} else if !Task.isCancelled { self.end(commit: false) } }
+        guard let out = tracker.feed(count: count, centroid: centroid, time: time) else { return }
         switch out {
         case let .began(axis): self.axis = axis; mode = .idle
         case let .update(p): progress = p; if case .idle = mode { choose(p) }; follow(p)

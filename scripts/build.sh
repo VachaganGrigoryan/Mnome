@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export MACOSX_DEPLOYMENT_TARGET=15.0
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$HOME=~" # the builder's home folder stays out of the binary
 cargo build --manifest-path core/Cargo.toml --release --offline
 swift build -c release -Xlinker -L -Xlinker "$PWD/core/target/release" -Xlinker -lmnome_core
 mkdir -p build/Mnome.app/Contents/MacOS

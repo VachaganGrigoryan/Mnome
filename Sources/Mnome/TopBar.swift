@@ -25,6 +25,8 @@ import MnomeSupport
     @Published var inOverview = false
     /// The front app's menu titles, where its hidden Mac menu bar has them.
     @Published var appMenus = AppMenus.Bar()
+    /// The apps' menu bar icons, drawn by Mnome.
+    @Published var appIcons: [AppIcons.Icon] = []
     /// Command is held: the bar's items can be dragged to another place.
     @Published var commandHeld = false
     private var monitor: NWPathMonitor?
@@ -150,11 +152,13 @@ struct BarWorkspaces: Equatable { var count = 1, current = 0, on = false }
 /// GNOME's `#panel .panel-button`: a pill inside a 3 px transparent border, ink at 17% hover, 28% pressed or open, 32% both.
 struct PanelButtonStyle: ButtonStyle {
     var open = false
-    func makeBody(configuration: Configuration) -> some View { PanelButtonBody(configuration: configuration, open: open) }
+    /// Each side; the Mac's menu titles need less than GNOME's 12.
+    var padding: CGFloat = 12
+    func makeBody(configuration: Configuration) -> some View { PanelButtonBody(configuration: configuration, open: open, padding: padding) }
 }
 private struct PanelButtonBody: View {
     let configuration: ButtonStyleConfiguration
-    let open: Bool
+    let open: Bool, padding: CGFloat
     @State private var hover = false
     @Environment(\.isFocused) private var focused
     @Environment(\.colorSchemeContrast) private var contrast
@@ -163,7 +167,7 @@ private struct PanelButtonBody: View {
         return level == 0 ? 0 : level + (contrast == .increased ? 0.13 : 0)
     }
     var body: some View {
-        configuration.label.padding(.horizontal, 12).frame(maxHeight: .infinity)
+        configuration.label.padding(.horizontal, padding).frame(maxHeight: .infinity)
             .background(Capsule().fill(ShellPalette.ink(ink)))
             .overlay(Capsule().stroke(focused ? ShellPalette.toggleOn : contrast == .increased ? ShellPalette.ink(0.6) : .clear, lineWidth: 2))
             .contentShape(Capsule()).padding(3).onHover { hover = $0 }.animation(.easeOut(duration: 0.15), value: ink)
@@ -197,6 +201,12 @@ struct TopBarView: View {
     /// The display's frame, in AppKit coordinates.
     var screen: CGRect = .zero
     var appMenu: (Int) -> Void = { _ in }
+    var appIcon: (AppIcons.Icon) -> Void = { _ in }
+    /// The Mac's menu bar, and so the app menus and icons, is on one display: the one with the front window.
+    fileprivate func onMenuBarDisplay(_ frame: CGRect?) -> Bool {
+        guard let frame else { return false }
+        return (screen.minX..<screen.maxX).contains(frame.minX) && abs(frame.minY - (WindowManager.primaryHeight - screen.maxY)) < 50
+    }
     private var statusLabel: String { "System status and Mnome settings, \(status.battery ?? "No battery"), \(status.network)" + (status.volume.map { $0.muted ? ", muted" : ", volume \(Int(($0.level * 100).rounded()))%" } ?? "") }
     @AppStorage("topBarLayout") private var layoutData = Data()
     @State private var dragged: BarItem?
@@ -232,7 +242,15 @@ struct TopBarView: View {
                         else { AdwaitaIcon(name: "system-shutdown-symbolic", fallback: "power") }
                     }
                 }.buttonStyle(PanelButtonStyle(open: status.openMenu == "quick-\(display)")).help(status.network).accessibilityLabel(statusLabel)
-            case .appIcons: EmptyView()
+            case .appIcons:
+                if onMenuBarDisplay(status.appIcons.first?.frame) {
+                    HStack(spacing: 0) {
+                        ForEach(status.appIcons) { icon in
+                            Button { appIcon(icon) } label: { Image(nsImage: icon.image).renderingMode(.template).frame(width: max(0, icon.frame.width - 8)) }
+                                .buttonStyle(PanelButtonStyle()).accessibilityLabel("App menu bar icon \(icon.id + 1)")
+                        }
+                    }
+                }
             }
         }
         .offset(x: dragged == item ? dragX : 0).zIndex(dragged == item ? 1 : 0)
@@ -252,7 +270,7 @@ struct TopBarView: View {
             return dots.reduce(0) { $0 + ($1 ? WorkspaceDots.active.width : WorkspaceDots.inactive.width) } + WorkspaceDots.spacing * CGFloat(max(0, dots.count - 1)) + 24
         case .clock: return (status.clock as NSString).size(withAttributes: [.font: NSFont(name: Adwaita.family, size: 14.667) ?? .boldSystemFont(ofSize: 14.667)]).width + 24
         case .status: let icons: CGFloat = status.volume == nil ? 2 : 3; return icons * 16 + (icons - 1) * 12 + 24
-        case .appIcons: return 0
+        case .appIcons: return onMenuBarDisplay(status.appIcons.first?.frame) ? status.appIcons.reduce(0) { $0 + max(0, $1.frame.width - 8) + 24 } : 0
         }
     }
 }
@@ -261,15 +279,15 @@ extension TopBarView {
     /// Each title where the Mac has it, so the app's real menu opens under it. Only on the display the Mac's menu bar
     /// is on, and not in the overview. They fill the room between the left zone and the next item.
     @ViewBuilder fileprivate func appMenus(_ layout: BarLayout) -> some View {
-        let items = status.appMenus.items, top = WindowManager.primaryHeight - screen.maxY
-        if !status.inOverview, let first = items.first, (screen.minX..<screen.maxX).contains(first.frame.minX), abs(first.frame.minY - top) < 50 {
+        let items = status.appMenus.items
+        if !status.inOverview, onMenuBarDisplay(items.first?.frame) {
             let start = layout.left.reduce(0) { $0 + width($1) }, center = layout.center.reduce(0) { $0 + width($1) }
             let end = layout.center.isEmpty ? screen.width - layout.right.reduce(0) { $0 + width($1) } : besideNotch.map { $0 - 12 - center } ?? (screen.width - center) / 2
             let xs = AppMenuStrip.layout(items.map { (x: $0.frame.minX - screen.minX, width: $0.frame.width) }, start: start, end: end - 8)
             ZStack(alignment: .leading) {
                 ForEach(Array(xs.enumerated()), id: \.offset) { i, x in
-                    Button { appMenu(i) } label: { Text(items[i].title).font(.adwaita(14, i == 0 ? .bold : .regular)).lineLimit(1).minimumScaleFactor(0.8).frame(width: max(0, items[i].frame.width - 24)) }
-                        .buttonStyle(PanelButtonStyle()).offset(x: x).accessibilityLabel("\(items[i].title) menu")
+                    Button { appMenu(i) } label: { Text(items[i].title).font(.adwaita(13.5, i == 0 ? .bold : .regular)).lineLimit(1).minimumScaleFactor(0.75).frame(width: max(0, items[i].frame.width - 8)) }
+                        .buttonStyle(PanelButtonStyle(padding: 4)).offset(x: x).accessibilityLabel("\(items[i].title) menu")
                 }
             }.frame(maxHeight: .infinity)
         }
@@ -296,6 +314,7 @@ final class TopBarPanel: NSPanel {
     var macChrome: MacChromeController?
     /// The front app's menus; nil while the Mac's menu bar is the bar.
     var appMenus: AppMenus?
+    var appIcons: AppIcons?
     private var commandWatch: [Any] = []
     func start() {
         status.start(); rebuild()
@@ -314,7 +333,7 @@ final class TopBarPanel: NSPanel {
             let panel = TopBarPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false; panel.level = replacesMenuBar ? NSWindow.Level(rawValue: 27) : .floating // above the Mac menu bar (24) and its status items (25): an auto-hidden menu bar that slides down when the pointer touches the top stays underneath
             panel.collectionBehavior = [.canJoinAllSpaces, .stationary]; panel.isOpaque = false; panel.backgroundColor = .clear
-            panel.contentView = NSHostingView(rootView: TopBarView(status: status, model: model, dock: dock, macChrome: macChrome, activities: activities, actions: actions, display: WindowManager.displayID(screen), besideNotch: replacesMenuBar ? screen.auxiliaryTopLeftArea?.width : nil, menu: { [weak self] in self?.toggleMenu($0, on: screen) }, screen: screen.frame, appMenu: { [weak self] in self?.appMenus?.open($0) }))
+            panel.contentView = NSHostingView(rootView: TopBarView(status: status, model: model, dock: dock, macChrome: macChrome, activities: activities, actions: actions, display: WindowManager.displayID(screen), besideNotch: replacesMenuBar ? screen.auxiliaryTopLeftArea?.width : nil, menu: { [weak self] in self?.toggleMenu($0, on: screen) }, screen: screen.frame, appMenu: { [weak self] in self?.appMenus?.open($0) }, appIcon: { [weak self] in self?.appIcons?.press($0) }))
             panel.setFrame(frame, display: true); panel.orderFrontRegardless(); panels.append(panel)
         }
     }

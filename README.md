@@ -12,6 +12,7 @@ Apple Silicon, macOS 15 or later (built and tested on macOS 27). Swift/AppKit ho
 
 - GNOME's 32-point bar on every display, in Adwaita Sans with Adwaita's symbolic icons, light or dark.
 - **The app's menus** next to Activities, as GNOME 3's app menu: the front app's name in bold and its File, Edit, View… A click opens the app's own real menu, so every item, shortcut and checkmark is the app's.
+- **Apps' menu bar icons** (input source, Dropbox, Docker…) drawn in Mnome's bar as GNOME's app indicators; a click opens the app's own menu. Needs Screen Recording.
 - **Rearrange it** like the Mac's: hold Command and drag Activities, the clock or the status pill to the left, middle or right; or use Preferences → Shell → Top Bar (clock in the middle or on the right, the right side's order). The app's menus take the room that is left and drop the titles that don't fit.
 - **Activities** on the left: one dot per workspace, the current one a wide pill; a click toggles the overview.
 - **Clock** in the centre, in GNOME's format and your locale; a click (or Super+V) opens the calendar with the day's events from Calendar.
@@ -62,6 +63,8 @@ Apple Silicon, macOS 15 or later (built and tested on macOS 27). Swift/AppKit ho
 - Nothing needs SIP off, a kernel extension or code injected into other apps.
 
 ## Screenshots
+
+![The top bar with Edge's menus and an app icon](docs/screenshots/top-bar-live.png)
 
 | Top bar (dark) | Top bar (light) |
 |---|---|
@@ -115,6 +118,7 @@ An ad-hoc signed build may ask for the permissions again after each rebuild. To 
 ## Known limits
 
 - The Apple menu can't be replaced; in the Mac menu bar mode, the Mac's clock and Control Center icon can't be hidden either.
+- macOS 27 draws apps' menu bar icons in one system process and says only where each one is, so Mnome copies their pictures every 2 seconds (a changing icon lags) and passes clicks on to them.
 - Native full-screen windows are left alone; Stage Manager and Mnome's workspaces don't mix (workspaces pause while it is on).
 - Three-finger drag (an Accessibility setting) takes three-finger swipes; turn it off for Mnome's gestures.
 - Window pictures are snapshots, not live video.

@@ -87,6 +87,7 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
     private lazy var desktop = DesktopController(wallpapers: overview.wallpapers)
     private lazy var statusItems = StatusItems(topBar: topBar)
     private lazy var appMenus = AppMenus(status: topBar.status)
+    private lazy var appIcons = AppIcons(status: topBar.status)
     let switcher = SwitcherController(), workspacePopup = WorkspacePopup()
     private var workspaceWatch: AnyCancellable?, mediaWatch: AnyCancellable?, screensWatch: NSObjectProtocol?
     let osd = OSD()
@@ -122,7 +123,7 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
         dock.start()
         updateFavoritesMenu()
         topBar.activities = { [weak self] in self?.showActivities() }
-        topBar.model = model; topBar.dock = dock.model; topBar.macChrome = macChrome; topBar.appMenus = appMenus
+        topBar.model = model; topBar.dock = dock.model; topBar.macChrome = macChrome; topBar.appMenus = appMenus; topBar.appIcons = appIcons
         macChrome.changed = { [weak self] in self?.topBar.rebuild(); self?.dock.rebuild(); self?.windowManager.updateDisplays(); self?.updateDesktop() }
         desktop.showPreferences = { ShellUtilities.shared.showPreferences() }; updateDesktop()
         SpacesWatch.shared.macChrome = macChrome; SpacesWatch.shared.start()
@@ -140,7 +141,7 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
         Adwaita.registerFont(); macChrome.hideChosen(); topBar.start()
         statusItems.menu = status.menu; statusItems.toggleOverview = { [weak self] in self?.showActivities() }
         statusItems.set(shown: !topBar.enabled); statusItems.dateOnly = !topBar.enabled; status.isVisible = topBar.enabled // the Mac's clock keeps the time
-        if topBar.enabled { appMenus.start() }
+        if topBar.enabled { appMenus.start(); appIcons.start() }
         workspaceWatch = windowManager.$state.sink { [weak self] state in
             guard let self, let state else { return }
             let now = BarWorkspaces(count: state.workspaces.count, current: state.workspaces.firstIndex(of: state.current) ?? 0, on: state.workspacesOn)
@@ -320,9 +321,9 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
     /// Mnome's own top bar, or the Mac's menu bar with Mnome's items in place of the Mac's status icons.
     func setTopBarVisible(_ visible: Bool) {
         topBar.setVisible(visible)
-        macChrome.set(.menuBar, hidden: visible); macChrome.set(.statusIcons, hidden: !visible)
+        macChrome.set(.menuBar, hidden: visible); macChrome.set(.statusIcons, hidden: true) // Mnome draws status itself in either bar, and the apps' icons in its own
         statusItems.set(shown: !visible); statusItems.dateOnly = !visible; status.isVisible = visible
-        if visible { appMenus.start() } else { appMenus.stop() }
+        if visible { appMenus.start(); appIcons.start() } else { appMenus.stop(); appIcons.stop() }
         windowManager.updateDisplays()
         status.menu?.items.first(where: { $0.action == #selector(toggleTopBar(_:)) })?.state = topBar.enabled ? .on : .off
     }

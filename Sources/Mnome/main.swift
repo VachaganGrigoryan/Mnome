@@ -84,6 +84,7 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
     private let hotCorner = HotCornerWatch()
     private lazy var slide = WorkspaceSlide(manager: windowManager, captures: overview.captures, wallpapers: overview.wallpapers)
     private lazy var gestures = Gestures(overview: overview, slide: slide, manager: windowManager)
+    private lazy var desktop = DesktopController(wallpapers: overview.wallpapers)
     let switcher = SwitcherController(), workspacePopup = WorkspacePopup()
     private var workspaceWatch: AnyCancellable?, mediaWatch: AnyCancellable?, screensWatch: NSObjectProtocol?
     let osd = OSD()
@@ -119,7 +120,9 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
         updateFavoritesMenu()
         topBar.activities = { [weak self] in self?.showActivities() }
         topBar.model = model; topBar.dock = dock.model; topBar.macChrome = macChrome
-        macChrome.changed = { [weak self] in self?.topBar.rebuild(); self?.dock.rebuild(); self?.windowManager.updateDisplays() }
+        macChrome.changed = { [weak self] in self?.topBar.rebuild(); self?.dock.rebuild(); self?.windowManager.updateDisplays(); self?.updateDesktop() }
+        desktop.showPreferences = { ShellUtilities.shared.showPreferences() }; updateDesktop()
+        SpacesWatch.shared.macChrome = macChrome; SpacesWatch.shared.start()
         topBar.actions = QuickActions(
             openMnome: { [weak self] in self?.showActivities() }, preferences: { [weak self] in self?.showPreferences() }, shortcuts: { [weak self] in self?.showKeyboardShortcuts() },
             about: { [weak self] in self?.showAbout() }, quit: { [weak self] in self?.quit() }, systemSettings: { [weak self] in self?.openSettings("") },
@@ -208,6 +211,7 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
         }
         hotCorner.start()
     }
+    private func updateDesktop() { desktop.set(shown: macChrome.hidden.contains(.desktop)) }
     func startShortcuts() {
         let store = ShortcutStore.shared
         store.superTapped = { [weak self] in self?.overview.toggle(apps: false) }

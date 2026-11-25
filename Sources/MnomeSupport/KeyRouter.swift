@@ -73,6 +73,8 @@ public struct KeyRouter: Sendable {
         if !repeated, let started = startSwitcher(key: key, flags: flags) { return started }
         // The Mac keyboard's Mission Control and Launchpad keys, unmodified: GNOME's overview and app grid.
         if flags & (KeyFlags.shift | KeyFlags.control | KeyFlags.option | KeyFlags.command) == 0, let fixed: Decision = key == 160 ? .superTap : key == 131 ? .run(.appGrid) : nil { held.insert(key); return fixed }
+        // Ctrl+↑ and Ctrl+↓, the Mac's Mission Control and App Exposé keys: Mnome's overview and app grid instead of the Mac's.
+        if let chord = Chord(key: key, flags: flags, superKey: superKey), let fixed: Decision = chord == Chord(126, .control) ? .superTap : chord == Chord(125, .control) ? .run(.appGrid) : nil { held.insert(key); return fixed }
         guard let chord = Chord(key: key, flags: flags, superKey: superKey), let action = table.action(for: chord) else { return .pass }
         held.insert(key)
         return .run(action)

@@ -323,6 +323,7 @@ struct PreferencesView: View {
     @AppStorage("edgeTiling") private var edgeTiling = true
     @AppStorage("hotCorner") private var hotCorner = true
     @AppStorage("trackpadGestures") private var trackpadGestures = true
+    @ObservedObject private var spaces = SpacesWatch.shared
     private static var threeFingerDrag: Bool { ["com.apple.AppleMultitouchTrackpad", "com.apple.driver.AppleBluetoothMultitouch.trackpad"].contains { UserDefaults(suiteName: $0)?.bool(forKey: "TrackpadThreeFingerDrag") == true } }
     @State private var page = "appearance"
     var body: some View {
@@ -345,6 +346,9 @@ struct PreferencesView: View {
                         }
                         PreferencesGroup(title: "Workspaces", footer: "Workspaces are on the main display; other displays show all their windows. They are off while Stage Manager is on, and assume one macOS desktop (Space) per display.") {
                             SwitchRow(title: "Workspaces", isOn: Binding(get: { workspacesOn }, set: { workspacesOn = $0; actions.setWorkspaces($0) }))
+                            if let summary = spaces.summary {
+                                ActionRow(title: spaces.removing ? "Remove Them in Mission Control…" : "Remove Extra Mac Desktops…", subtitle: spaces.removing ? "Point at a desktop at the top and click its ×. Mission Control goes off again once one is left." : summary, icon: "rectangle.stack.badge.minus", action: { spaces.remove() }).disabled(spaces.removing)
+                            }
                         }
                         PreferencesGroup(title: "Windows", footer: "Edge tiling: drag a window to the left or right edge to fill half the screen, into a corner for a quarter, to the top to maximize it. Bring Back moves every window that is out of sight back onto the screen. Window management does not support Stage Manager yet.") {
                             SwitchRow(title: "Edge Tiling", isOn: $edgeTiling)

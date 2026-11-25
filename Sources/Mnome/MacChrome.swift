@@ -75,7 +75,7 @@ struct CFPreferencesStore: PreferenceStore {
     private func finish(_ elements: [MacElement], quitting: Bool = false) {
         persist(); hidden = snapshot.hidden
         var processes = Set(elements.compactMap(\.owner))
-        if elements.contains(.desktop) { processes.insert("WindowManager") } // the widgets
+        if elements.contains(.desktop) || elements.contains(.missionControl) { processes.insert("WindowManager") } // the widgets; Mission Control lives there on macOS 27
         for name in processes { let task = Process(); task.executableURL = URL(fileURLWithPath: "/usr/bin/killall"); task.arguments = [name]; try? task.run(); if quitting { task.waitUntilExit() } } // launchd relaunches them with the new prefs
         if elements.contains(.menuBar) { applyMenuBar(quitting: quitting) }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.changed?() }

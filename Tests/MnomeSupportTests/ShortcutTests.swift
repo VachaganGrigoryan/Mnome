@@ -126,6 +126,9 @@ final class ShortcutTableTests: XCTestCase {
         XCTAssertEqual(r.keyDown(key: 160, flags: 0x10_0008, repeated: false), .pass) // with Command it is someone else's
         XCTAssertEqual(r.keyDown(key: 124, flags: 0x4_0000, repeated: false), .run(.workspaceNext))
         XCTAssertEqual(r.keyDown(key: 123, flags: 0x6_0000, repeated: false), .run(.carryPrevious))
+        XCTAssertEqual(r.keyDown(key: 126, flags: 0xA4_0000, repeated: false), .superTap) // Ctrl+↑, arrows carry Fn and numeric-pad bits
+        XCTAssertEqual(r.keyDown(key: 125, flags: 0xA4_0000, repeated: false), .run(.appGrid))
+        XCTAssertEqual(r.keyDown(key: 126, flags: 0xA6_0000, repeated: false), .pass, "with Shift it is the app's")
     }
     func testRightOptionAsSuperLeavesLeftOptionForTheSwitcher() {
         var r = KeyRouter(); r.superKey = .rightOption

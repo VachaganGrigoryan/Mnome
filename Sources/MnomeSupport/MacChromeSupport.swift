@@ -39,10 +39,11 @@ public enum MacElement: String, CaseIterable, Codable {
                              Setting(domain: "com.apple.WindowManager", key: "EnableStandardClickToShowDesktop", hidden: .bool(false))]
         case .missionControl: [Setting(domain: "com.apple.dock", key: "mcx-expose-disabled", hidden: .bool(true))]
             + ["showMissionControlGestureEnabled", "showAppExposeGestureEnabled", "showDesktopGestureEnabled", "showLaunchpadGestureEnabled"].map { Setting(domain: "com.apple.dock", key: $0, hidden: .bool(false)) }
-            // The Mac's own three-finger swipes (between full-screen apps, Mission Control) would run beside Mnome's. 0 is off.
-            + ["com.apple.AppleMultitouchTrackpad", "com.apple.driver.AppleBluetoothMultitouch.trackpad"].flatMap { domain in ["TrackpadThreeFingerHorizSwipeGesture", "TrackpadThreeFingerVertSwipeGesture"].map { Setting(domain: domain, key: $0, hidden: .int(0)) } }
+            // The Mac's own swipes (between full-screen apps and Spaces, Mission Control) would run beside Mnome's. 0 is off.
+            // Four and five fingers too: on macOS 27 the Mac's Mission Control and Spaces still answer them, whatever mcx-expose-disabled says.
+            + ["com.apple.AppleMultitouchTrackpad", "com.apple.driver.AppleBluetoothMultitouch.trackpad"].flatMap { domain in ["TrackpadThreeFingerHorizSwipeGesture", "TrackpadThreeFingerVertSwipeGesture", "TrackpadFourFingerHorizSwipeGesture", "TrackpadFourFingerVertSwipeGesture", "TrackpadFourFingerPinchGesture", "TrackpadFiveFingerPinchGesture"].map { Setting(domain: domain, key: $0, hidden: .int(0)) } }
             // The same choice as System Settings keeps it, per Mac; the Dock acts on this one.
-            + ["com.apple.trackpad.threeFingerHorizSwipeGesture", "com.apple.trackpad.threeFingerVertSwipeGesture"].map { Setting(domain: "NSGlobalDomain" + MacElement.currentHost, key: $0, hidden: .int(0)) }
+            + ["threeFingerHorizSwipeGesture", "threeFingerVertSwipeGesture", "fourFingerHorizSwipeGesture", "fourFingerVertSwipeGesture", "fourFingerPinchSwipeGesture", "fiveFingerPinchSwipeGesture"].map { Setting(domain: "NSGlobalDomain" + MacElement.currentHost, key: "com.apple.trackpad." + $0, hidden: .int(0)) }
         case .hotCorners: ["tl", "tr", "bl", "br"].map { Setting(domain: "com.apple.dock", key: "wvous-\($0)-corner", hidden: .int(1)) } // 1 is "no action"
         case .animations: [Setting(domain: "NSGlobalDomain", key: "NSAutomaticWindowAnimationsEnabled", hidden: .bool(false)), Setting(domain: "NSGlobalDomain", key: "NSWindowResizeTime", hidden: .double(0.001)),
                            Setting(domain: "com.apple.dock", key: "launchanim", hidden: .bool(false)), Setting(domain: "com.apple.dock", key: "expose-animation-duration", hidden: .double(0.001))]

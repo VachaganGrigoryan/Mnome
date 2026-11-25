@@ -26,6 +26,10 @@ enum Private {
 
     private static let getDark = symbol(skyLight, "SLSGetAppearanceThemeLegacy", as: (@convention(c) () -> Bool).self)
     private static let putDark = symbol(skyLight, "SLSSetAppearanceThemeLegacy", as: (@convention(c) (Bool) -> Void).self)
+    private static let connection = symbol(skyLight, "SLSMainConnectionID", as: (@convention(c) () -> Int32).self)
+    private static let displaySpaces = symbol(skyLight, "SLSCopyManagedDisplaySpaces", as: (@convention(c) (Int32) -> Unmanaged<CFArray>?).self)
+    /// Each display's Spaces, as Mission Control knows them; nil when this macOS cannot say.
+    static var managedSpaces: [[String: Any]]? { connection.flatMap { id in displaySpaces?(id())?.takeRetainedValue() as? [[String: Any]] } }
     static var darkStyle: Bool? { putDark == nil ? nil : getDark?() }
     static func setDarkStyle(_ on: Bool) { putDark?(on) }
 

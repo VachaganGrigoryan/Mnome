@@ -58,11 +58,18 @@ struct DateMenuView: View {
         .onExitCommand {}
     }
     private func select(_ day: Date) { selected = day; agenda.show(day) }
+    @ObservedObject private var spaces = SpacesWatch.shared
     private var messages: some View {
         VStack(spacing: 12) {
+            if let summary = spaces.summary {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Extra Mac Desktops").font(.adwaita(14.667, .bold))
+                    Text(summary + " Remove them in Preferences → Shell.").font(.adwaita(13)).foregroundStyle(ShellPalette.ink(0.7)).fixedSize(horizontal: false, vertical: true)
+                }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(RoundedRectangle(cornerRadius: 12).fill(ShellPalette.ink(0.08)))
+            }
             Spacer()
-            Image(systemName: "bell.slash").font(.system(size: 48, weight: .regular)).foregroundStyle(ShellPalette.ink(0.4)).accessibilityHidden(true)
-            Text("No Notifications").font(.adwaita(14.667, .bold)).foregroundStyle(ShellPalette.ink(0.5))
+            if spaces.summary == nil { Image(systemName: "bell.slash").font(.system(size: 48, weight: .regular)).foregroundStyle(ShellPalette.ink(0.4)).accessibilityHidden(true)
+            Text("No Notifications").font(.adwaita(14.667, .bold)).foregroundStyle(ShellPalette.ink(0.5)) }
             Spacer()
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }

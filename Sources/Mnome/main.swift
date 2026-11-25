@@ -235,7 +235,7 @@ enum PresentationState: Equatable { case loading, content, empty, error(String) 
     private func switchWorkspace(_ make: (WMState) -> WMEvent?) {
         guard windowManager.running, let state = windowManager.state, state.workspacesOn, let event = make(state) else { return }
         windowManager.send(event)
-        if let now = windowManager.state, let i = now.workspaces.firstIndex(of: now.current) { workspacePopup.show(count: now.workspaces.count, current: i) }
+        if !overview.isOpen, let now = windowManager.state, let i = now.workspaces.firstIndex(of: now.current) { workspacePopup.show(count: now.workspaces.count, current: i) } // the overview slides instead
     }
     @objc func bringBackWindows() {
         Task {
@@ -335,6 +335,7 @@ MainActor.assumeIsolated {
  if CommandLine.arguments.contains("--system-check") { SystemCheck.run() }
  if CommandLine.arguments.contains("--engine-check") { EngineCheck.run() }
  if CommandLine.arguments.contains("--key-check") { KeyCheck.run() }
+ if CommandLine.arguments.contains("--overview-check") { OverviewCheck.run() }
  let app = NSApplication.shared
  if let flag = CommandLine.arguments.firstIndex(of: "--gallery") {
     guard CommandLine.arguments.indices.contains(flag + 1) else { fatalError("Usage: Mnome --gallery DIR") }

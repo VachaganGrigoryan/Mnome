@@ -90,6 +90,12 @@ import MnomeSupport
     }
     var focused: UInt64? { state?.focus }
     /// True when the window is known exactly, so no guessing by title is needed.
+    /// Waits until no window is being moved or raised by us, or the time is up. True when settled.
+    func settled(timeout: Duration) async -> Bool {
+        let end = ContinuousClock.now + timeout
+        while ledger.busy || raising != nil { guard ContinuousClock.now < end else { return false }; try? await Task.sleep(for: .milliseconds(16)) }
+        return true
+    }
     func focus(_ id: UInt64) -> Bool { guard running, state?.window(id) != nil else { return false }; send(.activate(id)); raise(id, after: chains[id]); return true }
 
     /// For shortcuts: acts on the window in front, or on nothing when that is not a window we manage.

@@ -12,6 +12,8 @@ public struct IntentLedger {
     public init() {}
     public mutating func intend(_ id: UInt64, _ target: Target, revision: UInt64) { entries[id] = Entry(target: target, revision: revision) }
     public mutating func forget(_ id: UInt64) { entries[id] = nil }
+    /// Some move is still under way: the overview waits for this before it uncovers the screen.
+    public var busy: Bool { entries.values.contains { $0.pending } }
     public func target(_ id: UInt64) -> Target? { entries[id]?.target }
     public func isCurrent(_ id: UInt64, revision: UInt64) -> Bool { entries[id]?.revision == revision }
     /// `ok` is whether the window now is as intended. A frame the app will not take exactly is accepted after the last try.

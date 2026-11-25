@@ -5,7 +5,8 @@ import ScreenCaptureKit
 /// Titles and owners come from the same listing. Without Screen Recording, everything stays empty and the overview shows app icons.
 @MainActor final class WindowCaptures: ObservableObject {
     struct Info { let title: String, pid: pid_t }
-    @Published private(set) var images: [UInt64: NSImage] = [:]
+    /// Handed straight to Core Animation, which keeps them on the GPU.
+    @Published private(set) var images: [UInt64: CGImage] = [:]
     @Published private(set) var info: [UInt64: Info] = [:]
     private var running: Task<Void, Never>?
     /// The given windows first, in order; three at a time.
@@ -24,7 +25,7 @@ import ScreenCaptureKit
                 for _ in 0..<3 { add() }
                 for await (id, image) in group {
                     if Task.isCancelled { group.cancelAll(); return }
-                    if let image { images[id] = NSImage(cgImage: image, size: .zero) }
+                    if let image { images[id] = image }
                     add()
                 }
             }

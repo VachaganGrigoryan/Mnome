@@ -92,6 +92,12 @@ final class RecoveryTests: XCTestCase {
 }
 final class IntentLedgerTests: XCTestCase {
     let frame = CGRect(x: 10, y: 10, width: 100, height: 100), now = Date(timeIntervalSince1970: 100)
+    func testLedgerIsBusyUntilEveryMoveHasAnswered() {
+        var ledger = IntentLedger(); XCTAssertFalse(ledger.busy)
+        ledger.intend(1, .parked, revision: 1); ledger.intend(2, .minimized, revision: 1); XCTAssertTrue(ledger.busy)
+        _ = ledger.finished(1, revision: 1, ok: true, observed: nil); XCTAssertTrue(ledger.busy)
+        _ = ledger.finished(2, revision: 1, ok: true, observed: nil); XCTAssertFalse(ledger.busy)
+    }
     func testLateResultsAreDropped() {
         var ledger = IntentLedger(); ledger.intend(1, .shown(frame), revision: 1); ledger.intend(1, .parked, revision: 2)
         XCTAssertEqual(ledger.finished(1, revision: 1, ok: true, observed: frame), .stale)

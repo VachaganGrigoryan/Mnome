@@ -2,7 +2,7 @@
 
 **GNOME Shell on macOS, with SIP on.** Mnome replaces the Mac's menu bar, Dock, Mission Control and desktop with GNOME's top bar, overview, app grid, workspaces and keyboard shortcuts. It is a normal app: quit it and the Mac comes back exactly as it was.
 
-![Mnome's top bar](docs/screenshots/top-bar.png)
+![The overview](docs/screenshots/overview.png)
 
 Apple Silicon, macOS 15 or later (built and tested on macOS 27). Swift/AppKit host, Rust core.
 
@@ -65,6 +65,10 @@ Apple Silicon, macOS 15 or later (built and tested on macOS 27). Swift/AppKit ho
 |---|---|
 | ![Top bar, dark](docs/screenshots/top-bar.png) | ![Top bar, light](docs/screenshots/top-bar-light.png) |
 
+| App grid | Desktop |
+|---|---|
+| ![App grid](docs/screenshots/app-grid.png) | ![Desktop](docs/screenshots/desktop.png) |
+
 | Quick Settings | Calendar | Run a Command |
 |---|---|---|
 | ![Quick Settings](docs/screenshots/quick-settings.png) | ![Calendar](docs/screenshots/date-menu.png) | ![Run a Command](docs/screenshots/run-dialog.png) |
@@ -125,6 +129,6 @@ cargo build --release --manifest-path core/Cargo.toml --offline && swift test
 ./scripts/live-tests.sh        # drives the real Mac for ~4 minutes
 ```
 
-`Mnome --gallery DIR` renders the panels to PNG without opening windows (the pictures above come from it).
+`Mnome --gallery DIR` renders the panels to PNG without opening windows (the panel pictures above come from it).
 
 More: [how each part works](docs/GUIDE.md), [the Rust core](core/README.md), [UI guide](docs/UI-GUIDE.md).

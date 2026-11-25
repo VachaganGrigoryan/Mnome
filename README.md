@@ -138,3 +138,9 @@ cargo build --release --manifest-path core/Cargo.toml --offline && swift test
 `Mnome --gallery DIR` renders the panels to PNG without opening windows (the panel pictures above come from it).
 
 More: [how each part works](docs/GUIDE.md), [the Rust core](core/README.md), [UI guide](docs/UI-GUIDE.md).
+
+## Licence
+
+Mnome is free software under the [GNU General Public License v3.0 or later](LICENSE) (`GPL-3.0-or-later`), as GNOME is.
+
+The bundled Adwaita Sans font (SIL Open Font License 1.1) and Adwaita symbolic icons (LGPLv3 or CC-BY-SA 3.0) keep their own licences: see [`ADWAITA-PROVENANCE.md`](Sources/Mnome/Resources/ADWAITA-PROVENANCE.md).

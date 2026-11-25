@@ -36,8 +36,8 @@ macOS 27.0.1 (26A434), 22 November 2026. Built-in display 1512×982 pt (notch, s
 
 1. ~~Parking apps with several windows, terminals and Electron editors.~~ TextEdit (two windows), Terminal and VS Code park to 1×32 pt and return exactly (`./scripts/live-tests.sh apps`).
 2. Setting Bluetooth and Wi-Fi.
-3. Display unplug, sleep and wake while windows are parked. ~~Journal entries whose app restarted~~ (`./scripts/live-tests.sh 2`).
+3. ~~Display unplug, sleep and wake while windows are parked.~~ Checked by the person on 25 November 2026 with workspaces in use (lock, sleep, Dell unplug, Dock and Cmd+Tab to a parked app, closing the last window), and automatically with a virtual display (`./scripts/live-tests.sh displays`). ~~Journal entries whose app restarted~~ (`./scripts/live-tests.sh 2`).
 
 ## Decision
 
-Parking, matching, capture, crash recovery, the key tap and the top bar all hold on 27.0.1. Phases 2 to 5 go as planned, with the bar at level 24. Workspaces stay off by default until open item 3 passes.
+Parking, matching, capture, crash recovery, the key tap and the top bar all hold on 27.0.1. Phases 2 to 5 go as planned, with the bar at level 24. Workspaces were off by default until open item 3 passed; they are on by default since phase 4.

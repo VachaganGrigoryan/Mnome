@@ -14,6 +14,7 @@ import ScreenCaptureKit
     }
     private let status: BarStatus
     private var timer: Timer?, observers: [NSObjectProtocol] = [], owners: [pid_t] = [], busy = false
+    private var lastPress: (id: Int, at: Date)? // one press per click, however the pointer moves while it is down
     init(status: BarStatus) { self.status = status }
 
     func start() {
@@ -33,6 +34,8 @@ import ScreenCaptureKit
     }
 
     func press(_ icon: Icon) {
+        if let last = lastPress, last.id == icon.id, Date().timeIntervalSince(last.at) < 0.4 { return }
+        lastPress = (icon.id, Date())
         let (element, pid, pressable, at) = (icon.element, icon.pid, icon.pressable, CGPoint(x: icon.frame.midX, y: icon.frame.midY))
         Task.detached {
             if pressable { _ = AXUIElementPerformAction(element, "AXPress" as CFString); return }

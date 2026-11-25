@@ -90,13 +90,15 @@ public enum ShellMenusPlacement {
     }
 }
 
-/// The app's menu titles in Mnome's bar, each where the Mac's hidden menu bar has it, so the app's real menu opens
-/// right under it. Positions are from the display's left edge. If the first would sit under Activities the row moves
-/// right; titles that would reach `end` (the clock) are left out, as the Mac leaves out titles that reach the notch.
+/// The app's menu titles in Mnome's bar, each exactly where the Mac's hidden menu bar has it: once a menu is open,
+/// macOS follows the pointer over its own titles, so a title anywhere else would open its neighbour's menu. Positions
+/// are from the display's left edge. Titles are only shown from the first that starts at `start` (after the bar's left
+/// items) up to the last that ends by `end` (the next item), as the Mac leaves out titles that reach the notch.
 public enum AppMenuStrip {
-    public static func layout(_ items: [(x: CGFloat, width: CGFloat)], start: CGFloat, end: CGFloat) -> [CGFloat] {
-        guard let first = items.first else { return [] }
-        let shift = max(0, start - first.x)
-        return Array(items.map { $0.x + shift }.enumerated().prefix { $0.element + items[$0.offset].width <= end }.map(\.element))
+    /// The shown titles' indexes.
+    public static func layout(_ items: [(x: CGFloat, width: CGFloat)], start: CGFloat, end: CGFloat) -> Range<Int> {
+        guard let first = items.firstIndex(where: { $0.x >= start - 1 }) else { return 0..<0 }
+        let last = items[first...].prefix { $0.x + $0.width <= end }.count
+        return first..<(first + last)
     }
 }

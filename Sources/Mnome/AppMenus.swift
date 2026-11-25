@@ -8,6 +8,8 @@ import ApplicationServices
     struct Bar: Equatable { var pid: pid_t = 0; var items: [Item] = [] }
     private let status: BarStatus
     private var elements: [AXUIElement] = [], observers: [NSObjectProtocol] = []
+    /// The last press, so a click is one press: the pointer moving while the button is down asks again.
+    private var lastPress: (index: Int, at: Date)?, pressing = false
     init(status: BarStatus) { self.status = status }
 
     func start() {
@@ -45,13 +47,20 @@ import ApplicationServices
         }
     }
 
-    /// Presses the real title, so the app opens its own menu where the Mac would: under Mnome's title.
+    /// Presses the real title, so the app opens its own menu where the Mac would: under Mnome's title. A title whose
+    /// menu is open closes it instead, as a second click on the Mac does.
     func open(_ index: Int) {
         let pid = status.appMenus.pid
-        guard elements.indices.contains(index), pid != 0 else { return }
+        guard elements.indices.contains(index), pid != 0, !pressing else { return }
+        if let last = lastPress, last.index == index, Date().timeIntervalSince(last.at) < 0.4 { return }
+        lastPress = (index, Date()); pressing = true
         let element = elements[index]
         Task {
-            if case .failure = await AXClient.shared.run(pid, urgent: true, { try element.perform("AXPress") }) { read() } // the app rebuilt its menus
+            let done = await AXClient.shared.run(pid, urgent: true) {
+                if try element.flag("AXSelected"), let menu = (try element.value("AXChildren") as? [AXUIElement])?.first { try menu.perform("AXCancel") } else { try element.perform("AXPress") }
+            }
+            pressing = false
+            if case .failure = done { read() } // the app rebuilt its menus
         }
     }
 }

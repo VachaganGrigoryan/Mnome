@@ -202,6 +202,16 @@ struct TopBarView: View {
     var screen: CGRect = .zero
     var appMenu: (Int) -> Void = { _ in }
     var appIcon: (AppIcons.Icon) -> Void = { _ in }
+    private var dotsWidth: CGFloat {
+        let dots = WorkspaceDots.dots(count: status.workspaces.count, current: status.workspaces.current, on: status.workspaces.on)
+        return dots.reduce(0) { $0 + ($1 ? WorkspaceDots.active.width : WorkspaceDots.inactive.width) } + WorkspaceDots.spacing * CGFloat(max(0, dots.count - 1))
+    }
+    /// With the app's menus shown, Activities takes the Apple menu's place, up to where the Mac's titles start, so
+    /// every title can sit exactly where the Mac has it.
+    fileprivate func appleSlot(_ layout: BarLayout) -> CGFloat? {
+        guard !status.inOverview, layout.left.first == .activities, let first = status.appMenus.items.first, onMenuBarDisplay(first.frame) else { return nil }
+        return first.frame.minX - screen.minX
+    }
     /// The Mac's menu bar, and so the app menus and icons, is on one display: the one with the front window.
     fileprivate func onMenuBarDisplay(_ frame: CGRect?) -> Bool {
         guard let frame else { return false }
@@ -228,8 +238,9 @@ struct TopBarView: View {
         Group {
             switch item {
             case .activities:
-                Button(action: activities) { WorkspaceDotsView(workspaces: status.workspaces) }
-                    .buttonStyle(PanelButtonStyle()).accessibilityLabel(WorkspaceDots.label(count: status.workspaces.count, current: status.workspaces.current, on: status.workspaces.on)).accessibilityHint("Open or close the window overview")
+                let slot = appleSlot(layout), natural = dotsWidth
+                Button(action: activities) { WorkspaceDotsView(workspaces: status.workspaces).scaleEffect(slot.map { min(1, ($0 - 8) / natural) } ?? 1).frame(width: slot.map { $0 - 8 }) }
+                    .buttonStyle(PanelButtonStyle(padding: slot == nil ? 12 : 4)).accessibilityLabel(WorkspaceDots.label(count: status.workspaces.count, current: status.workspaces.current, on: status.workspaces.on)).accessibilityHint("Open or close the window overview")
             case .clock:
                 Button { menu("date") } label: { Text(status.clock).font(.adwaita(14.667, .bold)).monospacedDigit().lineLimit(1) }
                     .buttonStyle(PanelButtonStyle(open: status.openMenu == "date-\(display)")).accessibilityLabel("Date and time, \(status.clock)").accessibilityHint("Open the calendar")
@@ -246,8 +257,9 @@ struct TopBarView: View {
                 if onMenuBarDisplay(status.appIcons.first?.frame) {
                     HStack(spacing: 0) {
                         ForEach(status.appIcons) { icon in
-                            Button { appIcon(icon) } label: { Image(nsImage: icon.image).renderingMode(.template).frame(width: max(0, icon.frame.width - 8)) }
-                                .buttonStyle(PanelButtonStyle()).accessibilityLabel("App menu bar icon \(icon.id + 1)")
+                            Button {} label: { Image(nsImage: icon.image).renderingMode(.template).frame(width: max(0, icon.frame.width - 8)) }
+                                .buttonStyle(PanelButtonStyle()).simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in appIcon(icon) })
+                                .accessibilityLabel("App menu bar icon \(icon.id + 1)").accessibilityAction { appIcon(icon) }
                         }
                     }
                 }
@@ -265,9 +277,7 @@ struct TopBarView: View {
     /// An item's width in the bar, for the app menus' room and for dropping.
     private func width(_ item: BarItem) -> CGFloat {
         switch item {
-        case .activities:
-            let dots = WorkspaceDots.dots(count: status.workspaces.count, current: status.workspaces.current, on: status.workspaces.on)
-            return dots.reduce(0) { $0 + ($1 ? WorkspaceDots.active.width : WorkspaceDots.inactive.width) } + WorkspaceDots.spacing * CGFloat(max(0, dots.count - 1)) + 24
+        case .activities: return appleSlot(BarLayout(data: layoutData)) ?? dotsWidth + 24
         case .clock: return (status.clock as NSString).size(withAttributes: [.font: NSFont(name: Adwaita.family, size: 14.667) ?? .boldSystemFont(ofSize: 14.667)]).width + 24
         case .status: let icons: CGFloat = status.volume == nil ? 2 : 3; return icons * 16 + (icons - 1) * 12 + 24
         case .appIcons: return onMenuBarDisplay(status.appIcons.first?.frame) ? status.appIcons.reduce(0) { $0 + max(0, $1.frame.width - 8) + 24 } : 0
@@ -283,11 +293,13 @@ extension TopBarView {
         if !status.inOverview, onMenuBarDisplay(items.first?.frame) {
             let start = layout.left.reduce(0) { $0 + width($1) }, center = layout.center.reduce(0) { $0 + width($1) }
             let end = layout.center.isEmpty ? screen.width - layout.right.reduce(0) { $0 + width($1) } : besideNotch.map { $0 - 12 - center } ?? (screen.width - center) / 2
-            let xs = AppMenuStrip.layout(items.map { (x: $0.frame.minX - screen.minX, width: $0.frame.width) }, start: start, end: end - 8)
+            let shown = AppMenuStrip.layout(items.map { (x: $0.frame.minX - screen.minX, width: $0.frame.width) }, start: start, end: end - 8)
             ZStack(alignment: .leading) {
-                ForEach(Array(xs.enumerated()), id: \.offset) { i, x in
-                    Button { appMenu(i) } label: { Text(items[i].title).font(.adwaita(13.5, i == 0 ? .bold : .regular)).lineLimit(1).minimumScaleFactor(0.75).frame(width: max(0, items[i].frame.width - 8)) }
-                        .buttonStyle(PanelButtonStyle(padding: 4)).offset(x: x).accessibilityLabel("\(items[i].title) menu")
+                ForEach(shown, id: \.self) { i in
+                    // Pressed on mouse-down, as the Mac's titles: the button's own action would wait for mouse-up.
+                    Button {} label: { Text(items[i].title).font(.adwaita(13.5, i == 0 ? .bold : .regular)).lineLimit(1).minimumScaleFactor(0.75).frame(width: max(0, items[i].frame.width - 8)) }
+                        .buttonStyle(PanelButtonStyle(padding: 4)).simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in appMenu(i) })
+                        .offset(x: items[i].frame.minX - screen.minX).accessibilityLabel("\(items[i].title) menu").accessibilityAction { appMenu(i) }
                 }
             }.frame(maxHeight: .infinity)
         }

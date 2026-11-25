@@ -101,7 +101,11 @@ Right Command is **Super** (Preferences → Keyboard can make it Right Option). 
 
 The full list is in Mnome's **Keyboard Shortcuts** window.
 
-## Install
+## Download
+
+[The latest release](https://github.com/VachaganGrigoryan/Mnome/releases/latest) has `Mnome.app` zipped. It is not notarized by Apple: unzip it, move it to Applications, then right-click it and choose Open (or allow it in System Settings → Privacy & Security). Quitting Mnome puts everything back; after a crash, run `/Applications/Mnome.app/Contents/MacOS/Mnome --rescue`.
+
+## Build from source
 
 You need Xcode and Rust.
 
